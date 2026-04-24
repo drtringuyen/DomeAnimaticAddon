@@ -7,6 +7,7 @@ from . import (
     prepare_collage_scene,
     drawing_assistant,
     layer_management,
+    transparent_cel_managment,
     fade_in_fade_out,
 )
 
@@ -139,6 +140,24 @@ for _idname, _space in LAYER_EDITORS:
         "bl_options":     {'DEFAULT_CLOSED'},
         "draw":           draw_layer_panel,
     }))
+
+
+# ── Panel 4b: Transparent Cel (Image Editor only) ─────────────────────────────
+
+def draw_transparent_cel_panel(self, context):
+    box = self.layout.box()
+    transparent_cel_managment.draw_ui(box, context)
+
+
+panel_classes.append(type("DOMEANIMATIC_PT_transparent_cel_IMAGE", (bpy.types.Panel,), {
+    "bl_label":       "Transparent Cel",
+    "bl_idname":      "DOMEANIMATIC_PT_transparent_cel_IMAGE",
+    "bl_space_type":  "IMAGE_EDITOR",
+    "bl_region_type": "UI",
+    "bl_category":    "DomeAnimatic",
+    "bl_options":     {'DEFAULT_CLOSED'},
+    "draw":           draw_transparent_cel_panel,
+}))
 
 
 # ── Panel 5: Fade In / Fade Out ───────────────────────────────────────────────

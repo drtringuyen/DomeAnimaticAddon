@@ -52,25 +52,48 @@ def register():
         default=False,
     )
 
-    # ── Fade to Color ─────────────────────────────────────────────────────────
-    bpy.types.Scene.domeanimatic_fade_value = bpy.props.FloatProperty(
-        name="Fade Value",
-        description="Current blend opacity of the fade strip (read from VSE)",
+    # ── Color A (Fade to Color) ───────────────────────────────────────────────
+    bpy.types.Scene.domeanimatic_color_a_value = bpy.props.FloatProperty(
+        name="Color A Value",
+        description="Current blend opacity of the color A strip (read from VSE)",
         default=0.0,
         min=0.0,
         max=1.0,
         precision=3,
     )
-    bpy.types.Scene.domeanimatic_fade_strip_name = bpy.props.StringProperty(
-        name="Fade Strip Name",
-        description="Name of the color strip to track for fade",
+    bpy.types.Scene.domeanimatic_color_a_strip_name = bpy.props.StringProperty(
+        name="Color A Strip Name",
+        description="Name of the color strip to track for color A",
         default="to_black",
     )
-    bpy.types.Scene.domeanimatic_fade_color = bpy.props.FloatVectorProperty(
-        name="Fade Color",
-        description="Color of the fade strip",
+    bpy.types.Scene.domeanimatic_color_a_color = bpy.props.FloatVectorProperty(
+        name="Color A",
+        description="Color of the color A strip",
         subtype='COLOR',
         default=(0.0, 0.0, 0.0),
+        min=0.0,
+        max=1.0,
+    )
+
+    # ── Color B (Fade to Color) ────────────────────────────────────────────────
+    bpy.types.Scene.domeanimatic_color_b_value = bpy.props.FloatProperty(
+        name="Color B Value",
+        description="Current blend opacity of the color B strip (read from VSE)",
+        default=0.0,
+        min=0.0,
+        max=1.0,
+        precision=3,
+    )
+    bpy.types.Scene.domeanimatic_color_b_strip_name = bpy.props.StringProperty(
+        name="Color B Strip Name",
+        description="Name of the color strip to track for color B",
+        default="to_white",
+    )
+    bpy.types.Scene.domeanimatic_color_b_color = bpy.props.FloatVectorProperty(
+        name="Color B",
+        description="Color of the color B strip",
+        subtype='COLOR',
+        default=(1.0, 1.0, 1.0),
         min=0.0,
         max=1.0,
     )
@@ -120,9 +143,12 @@ def unregister():
     del bpy.types.Scene.domeanimatic_layer_spacing
     del bpy.types.Scene.domeanimatic_layer_expanded
     del bpy.types.Scene.domeanimatic_delete_color
-    del bpy.types.Scene.domeanimatic_fade_value
-    del bpy.types.Scene.domeanimatic_fade_strip_name
-    del bpy.types.Scene.domeanimatic_fade_color
+    del bpy.types.Scene.domeanimatic_color_a_value
+    del bpy.types.Scene.domeanimatic_color_a_strip_name
+    del bpy.types.Scene.domeanimatic_color_a_color
+    del bpy.types.Scene.domeanimatic_color_b_value
+    del bpy.types.Scene.domeanimatic_color_b_strip_name
+    del bpy.types.Scene.domeanimatic_color_b_color
     del bpy.types.Scene.domeanimatic_target_image
     del bpy.types.Scene.domeanimatic_target_object
     del bpy.types.Scene.domeanimatic_target_material

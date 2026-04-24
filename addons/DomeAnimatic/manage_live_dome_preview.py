@@ -77,8 +77,8 @@ def get_status():
 
 def relink_live_texture_to_material():
     """
-    Ensure the Dome Animatic material has an Image Texture node
-    pointing to the current LiveDomePreview and linked to the output.
+    Find an existing Image Texture node in the Dome Animatic material
+    and point it to LiveDomePreview. Does NOT modify shader graph structure.
     Returns (success, message).
     """
     live_img = utils.get_live_image()
@@ -94,46 +94,29 @@ def relink_live_texture_to_material():
         return False, msg
 
     if not mat.use_nodes:
-        mat.use_nodes = True
+        msg = "Material has no node graph. Please enable 'Use Nodes' first."
+        utils.log(f"[ManageLive] {msg}")
+        return False, msg
 
     nodes = mat.node_tree.nodes
-    links = mat.node_tree.links
 
     # Find existing tex node pointing to live image
     tex_node = find_live_texture_node(mat)
 
-    # Only create a NEW node if none exists at all — never reassign existing ones
+    # If no node pointing to LiveDomePreview, find ANY Image Texture node
     if tex_node is None:
-        # Check if there are any tex nodes at all
         existing_tex_nodes = [n for n in nodes if n.type == 'TEX_IMAGE']
         if existing_tex_nodes:
-            # All existing nodes point to other images — don't touch them
-            # Create a dedicated new node for LiveDomePreview
-            tex_node = nodes.new('ShaderNodeTexImage')
-            tex_node.label    = "LiveDomePreview"
-            tex_node.location = (-200, 0)
+            tex_node = existing_tex_nodes[0]
         else:
-            tex_node = nodes.new('ShaderNodeTexImage')
-            tex_node.location = (-200, 0)
+            msg = "No Image Texture node found in material. Please add one manually."
+            utils.log(f"[ManageLive] {msg}")
+            return False, msg
 
-    # Point to current LiveDomePreview
+    # ONLY change the image — never modify shader graph structure
     tex_node.image = live_img
 
-    # Find or create Material Output
-    output_node = next((n for n in nodes if n.type == 'OUTPUT_MATERIAL'), None)
-    if output_node is None:
-        output_node = nodes.new('ShaderNodeOutputMaterial')
-        output_node.location = (200, 0)
-
-    # Ensure Color → Surface link
-    already_linked = any(
-        lnk.from_node == tex_node and lnk.to_node == output_node
-        for lnk in mat.node_tree.links
-    )
-    if not already_linked:
-        links.new(tex_node.outputs['Color'], output_node.inputs['Surface'])
-
-    msg = f"Relinked to '{mat.name}'."
+    msg = f"Updated '{mat.name}' to use LiveDomePreview (shader structure preserved)."
     utils.log(f"[ManageLive] {msg}")
     return True, msg
 

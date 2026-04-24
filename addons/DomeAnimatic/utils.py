@@ -267,8 +267,8 @@ def restore_image_editor_to_live(context):
 def assign_image_to_target_material(context, image):
     """
     Assign the given image to the first Image Texture node
-    in the scene's target material. Also updates target_image pointer.
-    Returns True if successful.
+    in the scene's target material. Does NOT modify shader graph structure.
+    Also updates target_image pointer. Returns True if successful.
     """
     mat = context.scene.domeanimatic_target_material
     if mat is None or not mat.use_nodes:
@@ -282,15 +282,10 @@ def assign_image_to_target_material(context, image):
     )
 
     if tex_node is None:
-        # Create one linked to Material Output
-        nodes = mat.node_tree.nodes
-        links = mat.node_tree.links
-        tex_node = nodes.new('ShaderNodeTexImage')
-        tex_node.location = (-200, 0)
-        output = next((n for n in nodes if n.type == 'OUTPUT_MATERIAL'), None)
-        if output:
-            links.new(tex_node.outputs['Color'], output.inputs['Surface'])
+        log("[Utils] No Image Texture node found in material. Please add one manually.")
+        return False
 
+    # ONLY change the image — never modify shader graph structure
     tex_node.image = image
 
     # Update the scene pointer too
@@ -299,5 +294,5 @@ def assign_image_to_target_material(context, image):
     except Exception:
         pass
 
-    log(f"[Utils] Assigned '{image.name}' to material '{mat.name}'.")
+    log(f"[Utils] Assigned '{image.name}' to material '{mat.name}' (shader structure preserved).")
     return True
