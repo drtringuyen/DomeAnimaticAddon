@@ -509,7 +509,8 @@ _warning_shown = False
 def _invisible_layer_check(scene, depsgraph=None):
     """
     depsgraph_update_post — fires on brush stroke commit.
-    If the Image Editor is showing an invisible cel, pop a dialog.
+    Only warns if the Image Editor is actively in PAINT mode and showing
+    an invisible cel. Ignores all other depsgraph updates (mode switches etc).
     """
     global _warning_shown
     if _warning_shown:
@@ -520,7 +521,9 @@ def _invisible_layer_check(scene, depsgraph=None):
         slot_key    = active_slot.lower()
         if getattr(wm, f"domeanimatic_{slot_key}_visible", True):
             return  # visible — nothing to do
-        # Check Image Editor is actually showing this cel
+
+        cel_img = get_cel_image(active_slot)
+
         for window in wm.windows:
             for area in window.screen.areas:
                 if area.type != 'IMAGE_EDITOR':
@@ -528,11 +531,14 @@ def _invisible_layer_check(scene, depsgraph=None):
                 for space in area.spaces:
                     if space.type != 'IMAGE_EDITOR':
                         continue
-                    cel_img = get_cel_image(active_slot)
-                    if space.image == cel_img:
-                        _warning_shown = True
-                        bpy.ops.domeanimatic.cel_invisible_warning('INVOKE_DEFAULT')
-                        return
+                    # Only warn when actively painting — not on mode/property changes
+                    if space.mode != 'PAINT':
+                        continue
+                    if space.image != cel_img:
+                        continue
+                    _warning_shown = True
+                    bpy.ops.domeanimatic.cel_invisible_warning('INVOKE_DEFAULT')
+                    return
     except Exception:
         pass
 
@@ -1004,20 +1010,29 @@ def draw_row(layout, wm, slot_id):
     channel, _, label = SLOTS[slot_id]
     is_active   = wm.domeanimatic_active_cel == slot_id
     visible     = getattr(wm, f"domeanimatic_{slot_key}_visible", True)
-    filepath    = getattr(wm, f"domeanimatic_{slot_key}_filepath", "")
-    has_file    = bool(filepath and os.path.exists(filepath))
 
-    # Nearest file label (or "empty")
-    found_path, _ = find_closest_cel_file(slot_id)
-    if found_path:
-        file_label = os.path.splitext(os.path.basename(found_path))[0]
+    # Check if there is actually a strip at the playhead on this cel's channel
+    dome_scene   = bpy.data.scenes.get("Dome Animatic")
+    frame        = _dome_frame()
+    has_strip    = False
+    if dome_scene:
+        has_strip = utils.vse_get_strip_on_channel(dome_scene, channel, frame) is not None
+
+    # Label: show current strip name only when a strip exists at playhead
+    if has_strip:
+        found_path, _ = find_closest_cel_file(slot_id)
+        filepath = getattr(wm, f"domeanimatic_{slot_key}_filepath", "")
+        # Prefer the WM filepath (most recently loaded) over nearest-found
+        display = os.path.splitext(os.path.basename(filepath))[0] if filepath else \
+                  (os.path.splitext(os.path.basename(found_path))[0] if found_path else "empty")
     else:
-        file_label = "empty"
-    row_label = f"{label}: {file_label}"
+        display = "empty"
+    row_label = f"{label}: {display}"
 
-    # Use a box to highlight active row; alert (orange) if image is dirty
+    # Only show dirty state when a strip exists — zero-fill on empty space
+    # marks the datablock dirty but that's not a user-actionable save state
     _, img_name, _ = SLOTS[slot_id]
-    is_dirty = getattr(bpy.data.images.get(img_name), 'is_dirty', False)
+    is_dirty = has_strip and getattr(bpy.data.images.get(img_name), 'is_dirty', False)
 
     container = layout.box() if is_active else layout
     if is_dirty:
@@ -1055,17 +1070,22 @@ def draw_row(layout, wm, slot_id):
     op = cut_sub.operator("domeanimatic.cel_insert_cut", text="", icon='TRACKING_FORWARDS_SINGLE')
     op.slot = slot_id
 
-    # ── Clear — TEXTURE ───────────────────────────────────────────────────────
-    op = row.operator("domeanimatic.cel_clear", text="", icon='TEXTURE')
+    # ── Clear — greyed out when no strip at playhead ─────────────────────────
+    clear_sub = row.row(align=True)
+    clear_sub.enabled = has_strip
+    op = clear_sub.operator("domeanimatic.cel_clear", text="", icon='TEXTURE')
     op.slot = slot_id
 
-    # ── Delete ────────────────────────────────────────────────────────────────
-    op = row.operator("domeanimatic.cel_delete", text="", icon='TRASH')
+    # ── Delete — greyed out when no strip at playhead ─────────────────────────
+    del_sub = row.row(align=True)
+    del_sub.enabled = has_strip
+    op = del_sub.operator("domeanimatic.cel_delete", text="", icon='TRASH')
     op.slot = slot_id
 
-    # ── Save — blue (depress) when dirty; row already orange from alert above ─
+    # ── Save — greyed out when not dirty or no strip; blue depress when dirty ─
     save_sub = row.row(align=True)
-    save_sub.alert = False  # don't double-red the save button
+    save_sub.enabled = has_strip and is_dirty
+    save_sub.alert   = False
     op = save_sub.operator(
         "domeanimatic.cel_save", text="", icon='FILE_TICK',
         depress=is_dirty,

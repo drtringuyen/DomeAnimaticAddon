@@ -63,6 +63,21 @@ def _load_path_into_image(datablock, abs_path):
     datablock.reload()
 
 
+def _blank_cel_datablock(transparent_cel_module, slot_id):
+    """Zero-fill a cel datablock so it shows as transparent when no strip is present."""
+    cel_img = transparent_cel_module.get_or_create_cel_image(slot_id)
+    if cel_img.size[0] == 0:
+        return
+    try:
+        import numpy as np
+        w, h = cel_img.size
+        buf  = np.zeros(w * h * 4, dtype=np.float32)
+        cel_img.pixels.foreach_set(buf)
+        cel_img.update()
+    except Exception:
+        pass  # numpy unavailable — leave as-is
+
+
 # ── Main frame-change handler ─────────────────────────────────────────────────
 
 @persistent
@@ -97,10 +112,18 @@ def dome_live_preview_handler(scene, depsgraph=None):
     # ── CEL_LAYERS mode: tracks 2/3/4 → cel datablocks ───────────────────────
     if mode == 'CEL_LAYERS':
         from . import transparent_cel
+
         for ch, slot in _CH_TO_SLOT.items():
             strip = get_strip_on_channel(dome_scene, ch, frame)
+
             if not strip:
+                # No strip at this frame — blank the datablock if not already blank
+                if _last_path[ch] != "":
+                    _blank_cel_datablock(transparent_cel, slot)
+                    _last_path[ch] = ""
+                    utils.log(f"[Synch] Ch{ch} ({slot}) → empty (no strip at frame {frame})")
                 continue
+
             path = utils.resolve_strip_image_path(strip, frame)
             if not path or not os.path.exists(path):
                 continue
