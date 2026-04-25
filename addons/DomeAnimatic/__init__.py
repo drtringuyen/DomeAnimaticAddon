@@ -1,7 +1,7 @@
 bl_info = {
     "name": "DomeAnimatic",
     "author": "Your Name",
-    "version": (1, 3, 0),
+    "version": (1, 4, 0),
     "blender": (5, 1, 0),
     "location": "Sidebar > DomeAnimatic",
     "description": "DomeAnimatic addon",
@@ -17,8 +17,9 @@ from . import (
     capture_current_frame,
     collage_texture,
     prepare_collage_scene,
-    drawing_assistant,
+    color_palette,
     collage_manipulation,
+    transparent_cel,
     transparent_cel_managment,
     frame_snap_shot,
     fade_in_fade_out,
@@ -36,22 +37,22 @@ def register():
     capture_current_frame.register()
     collage_texture.register()
     prepare_collage_scene.register()
-    drawing_assistant.register()
+    color_palette.register()
     collage_manipulation.register()
-    transparent_cel_managment.register()
+    transparent_cel_managment.register()   # registers transparent_cel inside
     frame_snap_shot.register()
     fade_in_fade_out.register()
     panels.register()
-    print(f"[DomeAnimatic] ✅ Loaded.")
+    print("[DomeAnimatic] ✅ Loaded.")
     print("="*70 + "\n")
 
 def unregister():
     panels.unregister()
     fade_in_fade_out.unregister()
     frame_snap_shot.unregister()
-    transparent_cel_managment.unregister()
+    transparent_cel_managment.unregister()  # unregisters transparent_cel inside
     collage_manipulation.unregister()
-    drawing_assistant.unregister()
+    color_palette.unregister()
     prepare_collage_scene.unregister()
     collage_texture.unregister()
     capture_current_frame.unregister()

@@ -1,174 +1,250 @@
 # DomeAnimatic Blender Addon — Project Documentation
-
-## 1. Project Overview
-
-DomeAnimatic is a Blender 5.1 addon for managing a dome animatic workflow. It syncs a VSE timeline to a live dome preview texture, manages collage scenes, and provides tools for image painting and face manipulation.
+Version 1.4.0 — Blender 5.1
 
 ---
 
-## 2. PyCharm + Blender Development Setup
+## 1. Dev Setup
 
-### File Locations
 - **Dev source:** `D:\BlenderAddonDevelopment\DomeAnimaticAddon\`
-- **Installed addon:** `C:\Users\Reynard\AppData\Roaming\Blender Foundation\Blender\5.1\scripts\addons\DomeAnimatic\`
-- **Blender script dir:** Set `D:\BlenderAddonDevelopment\DomeAnimaticAddon` in Blender Preferences → File Paths → Script Directories
+- **Installed:** `C:\Users\Reynard\AppData\Roaming\Blender Foundation\Blender\5.1\scripts\addons\DomeAnimatic\`
 
-### Workflow
-1. Edit files in PyCharm at the dev source path
-2. Run `install.py` from PyCharm to copy files to the addon path
-3. In Blender's Scripting editor, run:
+### Reload in Blender
 ```python
-import importlib, sys
+import sys
 for key in [k for k in sys.modules if 'DomeAnimatic' in k]:
     del sys.modules[key]
 import addon_utils
 addon_utils.disable("DomeAnimatic", default_set=False)
 addon_utils.enable("DomeAnimatic", default_set=False)
 ```
-4. This reloads all modules without restarting Blender
 
 ---
 
-## 3. File Structure & Responsibilities
+## 2. File Structure
 
 ```
 DomeAnimatic/
-├── __init__.py                     # Entry point — import order & register/unregister
-├── utils.py                        # Shared helpers: VSE reading, image helpers,
-│                                   # viewport utils, view state save/restore,
-│                                   # material assignment, path helpers
-├── properties.py                   # All bpy.props registrations on Scene/WindowManager
+├── __init__.py                     # Entry point v1.4.0
+├── utils.py                        # All shared helpers (see §4)
+├── properties.py                   # All bpy.props (see §5)
 │
-├── manage_live_dome_preview.py     # LiveDomePreview ↔ Dome_Animatic material relink
-│                                   # Reload operator, status draw_status()
-├── prepare_live_dome_texture.py    # Texture size/scale settings, Prepare button
+├── manage_live_dome_preview.py     # LiveDomePreview ↔ material relink, Reload op
+├── prepare_live_dome_texture.py    # Texture size/scale, Prepare button
+│                                   # Auto-links material + cel nodes on prepare
 │
-├── synch_VSE_to_LiveDomePreview.py # VSE frame-change handler → LiveDomePreview reload
-│                                   # Playhead sync across all scenes (depsgraph)
-│                                   # block_handler()/unblock_handler() for render safety
+├── synch_VSE_to_LiveDomePreview.py # VSE sync — 3-way mode (BAKED/CEL_LAYERS/OFF)
+│                                   # BAKED: ch1 → LiveDomePreview, mutes ch2/3/4
+│                                   # CEL_LAYERS: ch2/3/4 → cel datablocks,
+│                                   #             mutes ch1
+│                                   # Menu Switch node: inputs[0].default_value
+│                                   #   = 'Baked' or 'Cels'
+│                                   # UI: centered "Synch VSE as:" label row +
+│                                   #   Baked Frame | Unbaked Cels | ▶/⏹ | 🔄
+│                                   # Collapsible material section (default closed)
+│                                   # Ops: set_synch_mode, synch_vse,
+│                                   #   stop_synch_vse, link_cel_nodes,
+│                                   #   debug_node_sockets, clear_console
 │
-├── capture_current_frame.py        # Save Current Frame operator (file dialog)
-│                                   # Switch Dome/Collage operator
-│                                   # Capture from View operator
-│                                   # draw_ui() → delegates to frame_snap_shot.py
-│
-├── frame_snap_shot.py              # PURE UI: wires all Frame Snap Shot panel layout
-│                                   # Save row + Handle Selected row
-│                                   # No operators — only layout code
+├── capture_current_frame.py        # Save Current Frame, Switch Dome/Collage,
+│                                   # Capture from View
+├── frame_snap_shot.py              # PURE UI: Frame Snap Shot panel layout
 │
 ├── collage_texture.py              # Render to LiveDomePreview operator
-│                                   # (renders scene silently, writes pixels)
+├── prepare_collage_scene.py        # Create/Load/Switch collage scenes
 │
-├── prepare_collage_scene.py        # Create Collage Scene operator
-│                                   # Load Closest / Load Dome Animatic operators
-│                                   # Camera zoom sync, scene list UI
+├── collage_manipulation.py         # Face ops + layer_move_up/down
 │
-├── collage_manipulation.py         # Mesh face operators:
-│                                   #   mark_face, duplicate_as_object,
-│                                   #   content_aware_delete, content_aware_cut,
-│                                   #   cut_fill_black (fill with DELETE material),
-│                                   #   recover_face
-│                                   # ensure_delete_material() helper
-│                                   # draw_ui() for Layer Management panel
+├── fade_in_fade_out.py             # Color A+B VSE strips → Mix node Factor
 │
-├── layer_management.py             # layer_duplicate, layer_cut (image paint layers)
-│                                   # layer_move_up/down (Z-axis object movement)
-│                                   # draw_ui() calls collage_manipulation.draw_ui()
+├── color_palette.py                # PURE UI: Color Palette (Image Editor only)
+│                                   # (renamed from drawing_assistant.py)
 │
-├── fade_in_fade_out.py             # Reads blend_alpha from named VSE color strip
-│                                   # Pushes value to Mix node Factor in target material
-│                                   # set_fade_color, keyframe_fade operators
+├── transparent_cel.py              # THREE-SLOT CEL LAYER SYSTEM
+│                                   #
+│                                   # Slots: BG=ch2, CEL_A=ch3, CEL_B=ch4
+│                                   # Datablocks: TransparentCel_BG/Cel_A/Cel_B
+│                                   #   use_fake_user=True, zero-filled on create
+│                                   #
+│                                   # Stem: always from ch1 (Baked) strip,
+│                                   #   strips _BG/_Cel_A/_Cel_B/_f_NNNNN suffixes
+│                                   # Naming: <stem>_<BG|Cel_A|Cel_B>_f_<05d>.png
+│                                   #
+│                                   # GPU overlay: POST_PIXEL BG→A→B stack
+│                                   # Invisible warning: depsgraph_update_post
+│                                   #   → invoke_props_dialog (Option B)
+│                                   #
+│                                   # Insert FULL (all slots):
+│                                   #   invoke: popup if strip exists at playhead
+│                                   #   BG: copy track-1 pixels, track-1 range
+│                                   #   Cel_A/B: blank PNG, cel channel's own
+│                                   #     strip range (fallback: track-1 range)
+│                                   #   Removes existing strip before inserting
+│                                   #   Only new strip selected after insert
+│                                   #
+│                                   # Insert CUT (Cel_A/B only, BG greyed out):
+│                                   #   invoke: popup if strip exists at playhead
+│                                   #   finds strip LEFT of current on cel channel
+│                                   #   copies its image (or blank if none)
+│                                   #   cuts current strip at playhead
+│                                   #   Only right-half strip selected after cut
+│                                   #
+│                                   # Delete: invoke popup → remove only the strip
+│                                   #   at playhead on cel's channel
+│                                   #
+│                                   # Clear: invoke popup → zero pixels of active
+│                                   #   cel datablock, strip at playhead selected
+│                                   #
+│                                   # All action ops (Full/Cut/Clear/Delete/Save):
+│                                   #   set that row as active cel after execution
+│                                   #   Visibility toggle does NOT set active
+│                                   #
+│                                   # _activate_slot() helper: sets WM active_cel
+│                                   #   and switches Image Editor to that datablock
+│                                   #
+│                                   # draw_row(): eye | label:nearest-file |
+│                                   #   opacity | InsertFull(RENDER_RESULT for BG,
+│                                   #   TRACKING_FORWARDS_SINGLE for Cel_A/B) |
+│                                   #   InsertCut(disabled for BG) |
+│                                   #   Clear | Delete | Save(blue when dirty)
+│                                   # Active row highlighted as box
 │
-├── drawing_assistant.py            # PURE UI: Color Palette via template_palette
-│                                   # Only shown in Image Editor
+├── transparent_cel_managment.py    # CEL PANEL UI
+│                                   # Folder row: label + status icon + field +
+│                                   #   refresh button (no resolved path label)
+│                                   # No unsaved warning banner
+│                                   # 3 rows: CEL_B(top), CEL_A, BG(bottom)
 │
-└── panels.py                       # Registers all Blender panels (pure wiring)
+└── panels.py                       # Pure panel wiring
+│                                   # View Info: Dev toggle + Console Toggle
+│                                   #   + Clear Console + Debug Node Info
 ```
 
-### Panel Order (Blender sidebar)
-1. **View Info** — Show Development Infos toggle
-2. **Live Dome Texture** — Prepare texture + Reload + Synch VSE
-3. **Frame Snap Shot** — Save Current Frame + Handle Selected row + Color Palette (Image Editor only)
-4. **Layer Management** — Layer Spacing + face manipulation operators
-5. **Fade In / Fade Out** — Strip opacity reader → Mix node driver
-6. **Collage** — Render to LiveDomePreview + collage scene management
+### Files to DELETE from disk
+`handlers.py`, `operators.py`, `layer_management.py`,
+`transparent_cel_fixes.py`, `drawing_assistant.py`
+
+### Panel order (sidebar)
+1. View Info
+2. Live Dome Texture
+3. Frame Snap Shot
+4. Transparent Cel (Image Editor only)
+5. Fade In / Fade Out
+6. Collage
 
 ---
 
-## 4. Key Architecture Decisions
+## 3. Architecture Rules
 
-### Properties Location
-- `WindowManager` — persists across scene switches: `show_labels`, `target_material` (for LiveDomePreview relink), `last_camera_zoom`
-- `Scene` — per-scene: `synch_active`, `target_object`, `target_material` (collage), `target_image`, `layer_spacing`, `delete_color`, `fade_value`, `fade_strip_name`, `fade_color`
-
-### Handler Architecture
-- `frame_change_pre` → `dome_live_preview_handler` — reloads LiveDomePreview image from VSE
-- `frame_change_post` → `dome_playhead_sync_handler` — syncs all scene playheads to Dome Animatic
-- `depsgraph_update_post` → `dome_scene_change_handler` — auto pause/resume VSE sync on scene switch
-- `depsgraph_update_post` → `fade_sync_handler` — reads blend_alpha, pushes to Mix node Factor
-- `_handler_blocked` flag — prevents handlers firing during renders/scene creation
-
-### UI Architecture
-- `panels.py` only registers panels and calls `draw_ui()` from functional files
-- `frame_snap_shot.py` is the single source of truth for Frame Snap Shot layout
-- `collage_manipulation.py` owns all face operator UI
-- Operators stay in their own files — UI files only reference `bl_idname` strings
-
-### LiveDomePreview Image
-- Always recreated with `bpy.data.images.new()` after collage renders (never `source='FILE'` after pixel write)
-- `manage_live_dome_preview.py` relinking is manual-only (no auto-relink handler to avoid hijacking other materials)
-- `show_labels` reads from `bpy.data.window_managers[0]` directly (not `context.window_manager`) for reliability across editors
-
-### Blender 5.1 API Notes
-- VSE strips: `sequence_editor.strips` (top level), `sequence_editor.strips_all` (all nested)
-- No `unified_paint_settings` — use `brush.size` / `brush.strength` directly
-- Operator properties cannot start with `_` (rename `_original_filepath` → `original_filepath`)
-- `bpy.ops.mesh.merge_vertices` → use `bpy.ops.mesh.remove_doubles`
-- Mix node inputs: use `.get('Factor')` or index 0, B color by name `'B'` or search by type
+- `panels.py` only wires panels — zero operators
+- `frame_snap_shot.py` owns Frame Snap Shot UI layout
+- Operators in source files, UI references by `bl_idname`
+- `WindowManager` props survive scene switches; `Scene` props are per-scene
+- VSE sync: track 1 in BAKED (mutes ch2/3/4); tracks 2/3/4 in CEL_LAYERS (mutes ch1)
+- Cel datablocks permanent, `use_fake_user=True`, zero-filled on creation
+- `_handler_blocked` wraps all renders and scene creation
+- VSE strip helpers in `utils.py`
+- Debug buttons go in View Info panel row
+- All cel action operators call `_activate_slot()` — visibility toggle does not
 
 ---
 
-## 5. Starting a New Session with Existing Files
+## 4. utils.py Public API
 
-**Yes — if you upload all `.py` files to a new chat, Claude will recognize the full context.**
+### Image
+- `get_live_image()`, `get_or_create_live_image(w, h)`
 
-### Recommended prompt to start a new session:
+### VSE — general
+- `get_active_strip_at_frame(scene, frame)` — highest channel
+- `resolve_strip_image_path(strip, frame)`
+- `get_dome_animatic_frame_info()` → (stem, filepath, strip, el)
+- `get_current_scene_frame_info(scene)`
+
+### VSE — cel operations
+- `vse_get_strip_on_channel(scene, channel, frame, include_muted=False)`
+- `vse_get_strip_left_of(scene, channel, strip)` → strip immediately left
+- `vse_get_channel_end_frame(scene, channel)`
+- `vse_get_channel_start_frame(scene, channel)`
+- `vse_insert_image_strip(scene, channel, abs_filepath, frame_start, frame_end)`
+  → deselects all, inserts, selects only new strip, sets active_strip
+- `vse_cut_strip_at_frame(scene, channel, frame, new_abs_filepath)`
+  → trims left half, calls vse_insert_image_strip for right half
+
+### Viewport / Image Editor
+- `set_image_editor_image(context, image)`
+- `tag_all_image_editors_redraw()`
+- `save_dome_view_state(context)` / `restore_dome_view_state(context)`
+- `switch_all_view3d_to_camera(context)`
+- `restore_image_editor_to_live(context)`
 
 ---
 
-> I'm continuing development of **DomeAnimatic**, a Blender 5.1 addon. I'm uploading all current `.py` files. Please read them all before answering.
+## 5. Properties Reference
+
+### WindowManager (global, survives scene switch)
+| Property | Default | Purpose |
+|---|---|---|
+| `domeanimatic_show_labels` | False | Dev info toggle |
+| `domeanimatic_target_material` | — | Dome Animatic material |
+| `domeanimatic_synch_mode` | 'OFF' | BAKED / CEL_LAYERS / OFF |
+| `domeanimatic_mat_nodes_expanded` | False | Material section collapsed |
+| `domeanimatic_cel_folder` | `"//transparent-cels-paintings"` | Cel PNG folder |
+| `domeanimatic_active_cel` | 'CEL_A' | BG / CEL_A / CEL_B |
+| `domeanimatic_last_camera_zoom` | 3.055 | Camera zoom across scenes |
+| `domeanimatic_{bg\|cel_a\|cel_b}_visible` | True | Layer eye |
+| `domeanimatic_{bg\|cel_a\|cel_b}_opacity` | 1.0 | Layer opacity |
+| `domeanimatic_{bg\|cel_a\|cel_b}_filepath` | "" | PNG path on disk |
+| `domeanimatic_{bg\|cel_a\|cel_b}_mat_image` | — | Material tex node image |
+
+### Scene (per-scene)
+`domeanimatic_synch_active`, `domeanimatic_target_object/material/image`,
+`domeanimatic_layer_spacing`, `domeanimatic_delete_color`,
+`domeanimatic_color_a/b_value/strip_name/color`,
+`domeanimatic_collage/manual_scene_expanded/layer_expanded`
+
+---
+
+## 6. Cel System Reference
+
+| Slot | VSE Channel | Datablock | File label |
+|---|---|---|---|
+| BG | 2 | `TransparentCel_BG` | `BG` |
+| CEL_A | 3 | `TransparentCel_Cel_A` | `Cel_A` |
+| CEL_B | 4 | `TransparentCel_Cel_B` | `Cel_B` |
+
+**Naming:** `<stem>_<BG|Cel_A|Cel_B>_f_<frame:05d>.png`
+Stem = ch1 strip filename, stripped of `_BG/_Cel_A/_Cel_B/_f_NNNNN` suffixes.
+
+**Material node mapping (Dome_Animatic):**
+- `Image Texture` → LiveDomePreview
+- `Image Texture.001` → TransparentCel_BG
+- `Image Texture.002` → TransparentCel_Cel_A
+- `Image Texture.003` → TransparentCel_Cel_B
+- `Menu Switch` → `inputs[0].default_value` = `'Baked'` or `'Cels'`
+
+**Auto-link:** Hitting "Prepare Live Dome Texture" auto-finds the material
+and links all four Image Texture nodes + sets WM pointers.
+
+---
+
+## 7. Session Starter Prompt
+
+> I'm continuing development of **DomeAnimatic**, a Blender 5.1 addon.
+> Uploading all current `.py` files — please read them before answering.
 >
-> **Setup:** PyCharm at `D:\BlenderAddonDevelopment\DomeAnimaticAddon\`, deployed to `C:\Users\[user]\AppData\Roaming\Blender Foundation\Blender\5.1\scripts\addons\DomeAnimatic\`. Reload in Blender by clearing `sys.modules` and calling `addon_utils.disable/enable`.
+> **Setup:** PyCharm at `D:\BlenderAddonDevelopment\DomeAnimaticAddon\`,
+> deployed to `C:\Users\Reynard\AppData\Roaming\Blender Foundation\Blender\5.1\scripts\addons\DomeAnimatic\`.
 >
-> **Architecture rules to maintain:**
+> **Architecture rules:**
 > - `panels.py` only wires panels — no operators
 > - `frame_snap_shot.py` owns Frame Snap Shot UI layout
-> - Operators stay in their source files, UI files reference them by `bl_idname`
-> - All properties on `WindowManager` that must survive scene switches
-> - `bpy.data.window_managers[0]` for `show_labels` (not `context.window_manager`)
-> - VSE API: `sequence_editor.strips` / `strips_all`
-> - No handler auto-relinking materials — manual only via Reload button
-> - `_handler_blocked` flag wraps all renders and scene creation
->
-> Please [describe your task here].
-
----
-
-## 6. Quick Reference: Common Patterns
-
-### Add a new operator
-1. Create class in relevant `.py` file
-2. Add to `classes = [...]` list in that file
-3. Register in that file's `register()`
-4. Add button in the relevant UI file (e.g. `frame_snap_shot.py`)
-
-### Add a new property
-1. Add to `properties.py` `register()` on `Scene` or `WindowManager`
-2. Add `del` in `properties.py` `unregister()`
-3. Reference as `context.scene.domeanimatic_xxx` or `bpy.data.window_managers[0].domeanimatic_xxx`
-
-### Add a new panel
-1. Add editor list to `panels.py`
-2. Write `draw_xxx_panel` function
-3. Loop to create panel classes with `type()`
-4. Import the draw module at top of `panels.py`
+> - Operators in source files, UI by `bl_idname`
+> - `WindowManager` props survive scene switches; `Scene` props are per-scene
+> - VSE sync: ch1 in BAKED (mutes ch2/3/4); ch2/3/4 in CEL_LAYERS (mutes ch1)
+> - Cel datablocks permanent, `use_fake_user=True`, zero-filled on creation
+> - Cel stem always from ch1, never from cel channel filenames
+> - All cel action ops call `_activate_slot()` after execution
+> - `vse_insert_image_strip` deselects all then selects only the new strip
+> - `_handler_blocked` wraps all renders and scene creation
+> - VSE helpers in `utils.py`; debug buttons in View Info panel
+> - Delete from disk: `handlers.py`, `operators.py`, `layer_management.py`,
+>   `transparent_cel_fixes.py`, `drawing_assistant.py`

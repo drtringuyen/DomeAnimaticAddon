@@ -2,7 +2,7 @@ import bpy
 from . import (
     capture_current_frame,
     collage_manipulation,
-    drawing_assistant,
+    color_palette,
 )
 
 

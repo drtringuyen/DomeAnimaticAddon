@@ -5,7 +5,7 @@ from . import (
     capture_current_frame,
     collage_texture,
     prepare_collage_scene,
-    drawing_assistant,
+    color_palette,
     transparent_cel_managment,
     fade_in_fade_out,
 )
@@ -49,12 +49,24 @@ COLLAGE_EDITORS = [
 # ── Panel 1: View Info ────────────────────────────────────────────────────────
 
 def draw_view_info_panel(self, context):
-    box = self.layout.box()
-    box.prop(
-        bpy.data.window_managers[0],
-        "domeanimatic_show_labels",
-        text="Show Development Infos",
-        toggle=True,
+    box  = self.layout.box()
+    row  = box.row(align=True)
+    wm   = bpy.data.window_managers[0]
+
+    # Show Development Infos toggle (stretches to fill)
+    row.prop(wm, "domeanimatic_show_labels",
+             text="Show Development Infos", toggle=True)
+
+    # Toggle system console
+    row.operator("wm.console_toggle", text="", icon='CONSOLE')
+
+    # Clear console (print blank lines — no native op, use a small operator)
+    row.operator("domeanimatic.clear_console", text="", icon='TRASH')
+
+    # Debug buttons go here in future iterations (added by other modules)
+    row.operator(
+        "domeanimatic.debug_node_sockets",
+        text="", icon='INFO',
     )
 
 panel_classes = []
@@ -96,7 +108,7 @@ def make_snapshot_draw(space_type):
         capture_current_frame.draw_ui(box, context, space_type=space_type)
         if space_type == 'IMAGE_EDITOR':
             palette_box = self.layout.box()
-            drawing_assistant.draw_ui(palette_box, context)
+            color_palette.draw_ui(palette_box, context)
     return draw_snapshot_panel
 
 for _idname, _space in SNAPSHOT_EDITORS:
