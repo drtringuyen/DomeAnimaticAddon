@@ -39,3 +39,4 @@ wheels/
 .cache/
 temp/
 tmp/
+.venv

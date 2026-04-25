@@ -1,7 +1,7 @@
 bl_info = {
     "name": "DomeAnimatic",
     "author": "Your Name",
-    "version": (1, 2, 0),  # Updated: Refactored fade_to_black/white → ColorA/ColorB for maintainability
+    "version": (1, 3, 0),
     "blender": (5, 1, 0),
     "location": "Sidebar > DomeAnimatic",
     "description": "DomeAnimatic addon",
@@ -19,7 +19,6 @@ from . import (
     prepare_collage_scene,
     drawing_assistant,
     collage_manipulation,
-    layer_management,
     transparent_cel_managment,
     frame_snap_shot,
     fade_in_fade_out,
@@ -28,7 +27,7 @@ from . import (
 
 def register():
     print("\n" + "="*70)
-    print(f"[DomeAnimatic v{bl_info['version'][0]}.{bl_info['version'][1]}.{bl_info['version'][2]}] Registering addon...")
+    print(f"[DomeAnimatic v{'.'.join(str(v) for v in bl_info['version'])}] Registering...")
     print("="*70)
     properties.register()
     manage_live_dome_preview.register()
@@ -39,12 +38,11 @@ def register():
     prepare_collage_scene.register()
     drawing_assistant.register()
     collage_manipulation.register()
-    layer_management.register()
     transparent_cel_managment.register()
     frame_snap_shot.register()
     fade_in_fade_out.register()
     panels.register()
-    print(f"[DomeAnimatic v{bl_info['version'][0]}.{bl_info['version'][1]}.{bl_info['version'][2]}] ✅ Addon loaded successfully!")
+    print(f"[DomeAnimatic] ✅ Loaded.")
     print("="*70 + "\n")
 
 def unregister():
@@ -52,7 +50,6 @@ def unregister():
     fade_in_fade_out.unregister()
     frame_snap_shot.unregister()
     transparent_cel_managment.unregister()
-    layer_management.unregister()
     collage_manipulation.unregister()
     drawing_assistant.unregister()
     prepare_collage_scene.unregister()

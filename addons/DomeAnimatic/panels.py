@@ -6,7 +6,6 @@ from . import (
     collage_texture,
     prepare_collage_scene,
     drawing_assistant,
-    layer_management,
     transparent_cel_managment,
     fade_in_fade_out,
 )
@@ -32,11 +31,11 @@ SNAPSHOT_EDITORS = [
     ("DOMEANIMATIC_PT_snapshot_NODE",   "NODE_EDITOR"),
 ]
 
-LAYER_EDITORS = [
-    ("DOMEANIMATIC_PT_layer_VIEW3D", "VIEW_3D"),
-    ("DOMEANIMATIC_PT_layer_VSE",    "SEQUENCE_EDITOR"),
-    ("DOMEANIMATIC_PT_layer_IMAGE",  "IMAGE_EDITOR"),
-    ("DOMEANIMATIC_PT_layer_NODE",   "NODE_EDITOR"),
+FADE_EDITORS = [
+    ("DOMEANIMATIC_PT_fade_VIEW3D", "VIEW_3D"),
+    ("DOMEANIMATIC_PT_fade_VSE",    "SEQUENCE_EDITOR"),
+    ("DOMEANIMATIC_PT_fade_IMAGE",  "IMAGE_EDITOR"),
+    ("DOMEANIMATIC_PT_fade_NODE",   "NODE_EDITOR"),
 ]
 
 COLLAGE_EDITORS = [
@@ -58,7 +57,6 @@ def draw_view_info_panel(self, context):
         toggle=True,
     )
 
-
 panel_classes = []
 
 for _idname, _space in VIEW_INFO_EDITORS:
@@ -78,7 +76,6 @@ def draw_main_panel(self, context):
     box = self.layout.box()
     prepare_live_dome_texture.draw_ui(box, context)
     synch_VSE_to_LiveDomePreview.draw_ui(box, context)
-
 
 for _idname, _space in DOME_EDITORS:
     panel_classes.append(type(_idname, (bpy.types.Panel,), {
@@ -102,7 +99,6 @@ def make_snapshot_draw(space_type):
             drawing_assistant.draw_ui(palette_box, context)
     return draw_snapshot_panel
 
-
 for _idname, _space in SNAPSHOT_EDITORS:
     panel_classes.append(type(_idname, (bpy.types.Panel,), {
         "bl_label":       "Frame Snap Shot",
@@ -115,39 +111,11 @@ for _idname, _space in SNAPSHOT_EDITORS:
     }))
 
 
-FADE_EDITORS = [
-    ("DOMEANIMATIC_PT_fade_VIEW3D", "VIEW_3D"),
-    ("DOMEANIMATIC_PT_fade_VSE",    "SEQUENCE_EDITOR"),
-    ("DOMEANIMATIC_PT_fade_IMAGE",  "IMAGE_EDITOR"),
-    ("DOMEANIMATIC_PT_fade_NODE",   "NODE_EDITOR"),
-]
-
-
-# ── Panel 4: Layer Management ─────────────────────────────────────────────────
-
-def draw_layer_panel(self, context):
-    box = self.layout.box()
-    layer_management.draw_ui(box, context)
-
-
-for _idname, _space in LAYER_EDITORS:
-    panel_classes.append(type(_idname, (bpy.types.Panel,), {
-        "bl_label":       "Layer Management",
-        "bl_idname":      _idname,
-        "bl_space_type":  _space,
-        "bl_region_type": "UI",
-        "bl_category":    "DomeAnimatic",
-        "bl_options":     {'DEFAULT_CLOSED'},
-        "draw":           draw_layer_panel,
-    }))
-
-
-# ── Panel 4b: Transparent Cel (Image Editor only) ─────────────────────────────
+# ── Panel 4: Transparent Cel (Image Editor only) ──────────────────────────────
 
 def draw_transparent_cel_panel(self, context):
     box = self.layout.box()
     transparent_cel_managment.draw_ui(box, context)
-
 
 panel_classes.append(type("DOMEANIMATIC_PT_transparent_cel_IMAGE", (bpy.types.Panel,), {
     "bl_label":       "Transparent Cel",
@@ -165,7 +133,6 @@ panel_classes.append(type("DOMEANIMATIC_PT_transparent_cel_IMAGE", (bpy.types.Pa
 def draw_fade_panel(self, context):
     box = self.layout.box()
     fade_in_fade_out.draw_ui(box, context)
-
 
 for _idname, _space in FADE_EDITORS:
     panel_classes.append(type(_idname, (bpy.types.Panel,), {
@@ -186,7 +153,6 @@ def draw_collage_panel(self, context):
     collage_texture.draw_ui(box, context)
     box.separator(factor=0.3)
     prepare_collage_scene.draw_ui(box, context)
-
 
 for _idname, _space in COLLAGE_EDITORS:
     panel_classes.append(type(_idname, (bpy.types.Panel,), {

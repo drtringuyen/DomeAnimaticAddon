@@ -2,21 +2,14 @@ import bpy
 from . import (
     capture_current_frame,
     collage_manipulation,
-    layer_management,
     drawing_assistant,
 )
 
 
-# ── UI draw ───────────────────────────────────────────────────────────────────
-
 def draw_ui(box, context, space_type=None):
-    """
-    Full Frame Snap Shot panel UI.
-    Operators live in their own modules — this file only wires the layout.
-    """
     from . import utils
-    verbose   = utils.show_labels(context)
-    is_dome   = context.scene.name == "Dome Animatic"
+    verbose = utils.show_labels(context)
+    is_dome = context.scene.name == "Dome Animatic"
 
     # ── Verbose info ──────────────────────────────────────────────────────────
     if verbose:
@@ -24,7 +17,6 @@ def draw_ui(box, context, space_type=None):
         dome_scene = bpy.data.scenes.get("Dome Animatic")
         info_col   = box.column(align=True)
         info_col.enabled = False
-
         if dome_scene is None:
             info_col.label(text="Dome Animatic scene not found", icon='ERROR')
         else:
@@ -36,7 +28,6 @@ def draw_ui(box, context, space_type=None):
                 info_col.label(text=bpy.path.abspath(os.path.dirname(filepath)), icon='FILE_FOLDER')
             else:
                 info_col.label(text=f"Frame: {frame} — no strip at cursor", icon='INFO')
-
         box.separator(factor=0.3)
 
     # ── Save Current Frame row ────────────────────────────────────────────────
@@ -47,7 +38,7 @@ def draw_ui(box, context, space_type=None):
     row.operator("domeanimatic.capture_from_view",     text="",                   icon='RESTRICT_RENDER_OFF')
     row.operator("domeanimatic.prepare_collage_scene", text="",                   icon='OUTLINER_DATA_GP_LAYER')
 
-    # ── Handle Selected row — greyed out on Dome Animatic ────────────────────
+    # ── Handle Selected + layer move row ─────────────────────────────────────
     row2 = box.row(align=True)
     row2.scale_y = 1.5
     row2.enabled = not is_dome
@@ -63,8 +54,6 @@ def draw_ui(box, context, space_type=None):
     col2.operator("domeanimatic.layer_move_up",   text="", icon='TRIA_UP')
     col2.operator("domeanimatic.layer_move_down", text="", icon='TRIA_DOWN')
 
-
-# ── Register / Unregister — no classes, pure UI ───────────────────────────────
 
 def register():
     pass
