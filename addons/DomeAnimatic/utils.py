@@ -211,7 +211,7 @@ def vse_get_strip_left_of_frame(scene, channel, frame):
     return max(candidates, key=lambda s: s.frame_final_end) if candidates else None
 
 
-
+def vse_get_strip_left_of(scene, channel, strip):
     """
     Return the IMAGE strip on `channel` whose frame_final_end is closest to
     (but not past) `strip.frame_final_start`. Returns None if no such strip.

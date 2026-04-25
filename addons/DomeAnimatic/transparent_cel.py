@@ -284,8 +284,31 @@ def _load_abs_into_slot(slot_id, abs_path, w, h):
     cel_img.filepath_raw = abs_path
     cel_img.source       = 'FILE'
     cel_img.reload()
-    # Enforce STRAIGHT alpha so transparent pixels render correctly in GPU overlay
     cel_img.alpha_mode   = 'STRAIGHT'
+
+
+def _load_slot_from_vse(slot_id, w, h):
+    """
+    After a VSE strip operation, read the actual strip path at the playhead
+    on the cel's channel and load that into the datablock.
+    This ensures the datablock always mirrors what the VSE shows, not what
+    filename was constructed locally.
+    Falls back to a no-op if no strip found.
+    """
+    dome_scene = bpy.data.scenes.get("Dome Animatic")
+    if dome_scene is None:
+        return
+    channel, _, _ = SLOTS[slot_id]
+    frame         = _dome_frame()
+    strip = utils.vse_get_strip_on_channel(dome_scene, channel, frame)
+    if strip is None:
+        return
+    path = utils.resolve_strip_image_path(strip, frame)
+    if path and os.path.exists(path):
+        _load_abs_into_slot(slot_id, path, w, h)
+        wm = bpy.data.window_managers[0]
+        setattr(wm, f"domeanimatic_{slot_id.lower()}_filepath", path)
+        utils.log(f"[TransparentCel] Loaded from VSE: {path}")
 
 
 # ── GPU overlay ───────────────────────────────────────────────────────────────
@@ -719,11 +742,11 @@ class DOMEANIMATIC_OT_cel_insert_full(bpy.types.Operator):
             dome_scene.sequence_editor.strips.remove(existing)
 
         utils.vse_insert_image_strip(dome_scene, channel, abs_path, start, end)
-        _load_abs_into_slot(self.slot, abs_path, w, h)
+        _load_slot_from_vse(self.slot, w, h)
         _activate_slot(self.slot)
 
         wm = bpy.data.window_managers[0]
-        setattr(wm, f"domeanimatic_{self.slot.lower()}_filepath", abs_path)
+        # filepath already updated inside _load_slot_from_vse
         utils.tag_all_image_editors_redraw()
         self.report({'INFO'}, f"[{self.slot}] Full {start}→{end}: {filename}")
         return {'FINISHED'}
@@ -816,11 +839,10 @@ class DOMEANIMATIC_OT_cel_insert_cut(bpy.types.Operator):
             new_strip.select = True
             dome_scene.sequence_editor.active_strip = new_strip
 
-        _load_abs_into_slot(self.slot, abs_path, w, h)
+        _load_slot_from_vse(self.slot, w, h)
         _activate_slot(self.slot)
 
         wm = bpy.data.window_managers[0]
-        setattr(wm, f"domeanimatic_{self.slot.lower()}_filepath", abs_path)
         utils.tag_all_image_editors_redraw()
         self.report({'INFO'}, f"[{self.slot}] Cut at frame {frame}: {filename}")
         return {'FINISHED'}
@@ -993,8 +1015,13 @@ def draw_row(layout, wm, slot_id):
         file_label = "empty"
     row_label = f"{label}: {file_label}"
 
-    # Use a box to highlight active row
+    # Use a box to highlight active row; alert (orange) if image is dirty
+    _, img_name, _ = SLOTS[slot_id]
+    is_dirty = getattr(bpy.data.images.get(img_name), 'is_dirty', False)
+
     container = layout.box() if is_active else layout
+    if is_dirty:
+        container.alert = True
     row = container.row(align=True)
     row.scale_y = 1.3
 
@@ -1017,15 +1044,15 @@ def draw_row(layout, wm, slot_id):
     # ── Opacity slider (inline) ───────────────────────────────────────────────
     row.prop(wm, f"domeanimatic_{slot_key}_opacity", text="", slider=True)
 
-    # ── Insert Full — BG uses RENDER_RESULT, Cel_A/B use TRACKING_FORWARDS_SINGLE
-    full_icon = 'RENDER_RESULT' if slot_id == 'BG' else 'TRACKING_FORWARDS_SINGLE'
+    # ── Fill (was Insert Full) — BG: RENDER_RESULT, Cel_A/B: CENTER_ONLY ─────
+    full_icon = 'RENDER_RESULT' if slot_id == 'BG' else 'CENTER_ONLY'
     op = row.operator("domeanimatic.cel_insert_full", text="", icon=full_icon)
     op.slot = slot_id
 
-    # ── Insert Cut — greyed out for BG ────────────────────────────────────────
+    # ── Insert (was Insert Cut) — greyed out for BG ───────────────────────────
     cut_sub = row.row(align=True)
     cut_sub.enabled = (slot_id != 'BG')
-    op = cut_sub.operator("domeanimatic.cel_insert_cut", text="", icon='TRACKING_CLEAR_FORWARDS')
+    op = cut_sub.operator("domeanimatic.cel_insert_cut", text="", icon='TRACKING_FORWARDS_SINGLE')
     op.slot = slot_id
 
     # ── Clear — TEXTURE ───────────────────────────────────────────────────────
@@ -1036,14 +1063,116 @@ def draw_row(layout, wm, slot_id):
     op = row.operator("domeanimatic.cel_delete", text="", icon='TRASH')
     op.slot = slot_id
 
-    # ── Save — blue highlight (depress) when dirty ────────────────────────────
-    _, img_name, _ = SLOTS[slot_id]
-    is_dirty = getattr(bpy.data.images.get(img_name), 'is_dirty', False)
-    op = row.operator(
+    # ── Save — blue (depress) when dirty; row already orange from alert above ─
+    save_sub = row.row(align=True)
+    save_sub.alert = False  # don't double-red the save button
+    op = save_sub.operator(
         "domeanimatic.cel_save", text="", icon='FILE_TICK',
         depress=is_dirty,
     )
     op.slot = slot_id
+
+
+def _count_unused_cel_files():
+    """Return the number of cel PNGs on disk not referenced by any VSE strip."""
+    dome_scene = bpy.data.scenes.get("Dome Animatic")
+    folder     = _cel_folder_abs()
+    if not os.path.isdir(folder):
+        return 0
+    referenced = set()
+    if dome_scene and dome_scene.sequence_editor:
+        for strip in dome_scene.sequence_editor.strips_all:
+            if strip.type == 'IMAGE' and strip.channel in (2, 3, 4):
+                for frame in range(int(strip.frame_final_start), int(strip.frame_final_end)):
+                    p = utils.resolve_strip_image_path(strip, frame)
+                    if p:
+                        referenced.add(os.path.normpath(p))
+    count = 0
+    for fname in os.listdir(folder):
+        if not fname.lower().endswith('.png'):
+            continue
+        if '_BG_f_' not in fname and '_Cel_A_f_' not in fname and '_Cel_B_f_' not in fname:
+            continue
+        if os.path.normpath(os.path.join(folder, fname)) not in referenced:
+            count += 1
+    return count
+
+
+class DOMEANIMATIC_OT_cel_purge_unused(bpy.types.Operator):
+    """
+    Delete PNG files in the cel folder that match the cel naming pattern
+    but are not referenced by any strip on their respective VSE channel.
+    Asks for confirmation before deleting.
+    """
+    bl_idname  = "domeanimatic.cel_purge_unused"
+    bl_label   = "Purge Unused Cel Files"
+    bl_options = {'REGISTER'}
+
+    _unused: list = []
+
+    def invoke(self, context, event):
+        dome_scene = bpy.data.scenes.get("Dome Animatic")
+        folder     = _cel_folder_abs()
+        if not os.path.isdir(folder):
+            self.report({'WARNING'}, "Cel folder not found.")
+            return {'CANCELLED'}
+
+        # Collect all paths referenced by VSE strips on channels 2/3/4
+        referenced = set()
+        if dome_scene and dome_scene.sequence_editor:
+            for strip in dome_scene.sequence_editor.strips_all:
+                if strip.type == 'IMAGE' and strip.channel in (2, 3, 4):
+                    for frame in range(
+                            int(strip.frame_final_start),
+                            int(strip.frame_final_end)):
+                        p = utils.resolve_strip_image_path(strip, frame)
+                        if p:
+                            referenced.add(os.path.normpath(p))
+
+        # Find unused PNGs in the cel folder
+        unused = []
+        for fname in os.listdir(folder):
+            if not fname.lower().endswith('.png'):
+                continue
+            # Only consider files matching our naming pattern
+            if '_BG_f_' not in fname and '_Cel_A_f_' not in fname \
+                    and '_Cel_B_f_' not in fname:
+                continue
+            abs_p = os.path.normpath(os.path.join(folder, fname))
+            if abs_p not in referenced:
+                unused.append(abs_p)
+
+        self._unused = unused
+
+        if not unused:
+            self.report({'INFO'}, "No unused cel files found.")
+            return {'CANCELLED'}
+
+        return context.window_manager.invoke_props_dialog(self, width=420)
+
+    def draw(self, context):
+        col = self.layout.column(align=True)
+        col.label(
+            text=f"Delete {len(self._unused)} unused cel PNG(s)?",
+            icon='TRASH',
+        )
+        col.separator()
+        for p in self._unused[:8]:
+            col.label(text=os.path.basename(p), icon='IMAGE_DATA')
+        if len(self._unused) > 8:
+            col.label(text=f"  … and {len(self._unused) - 8} more")
+
+    def execute(self, context):
+        deleted = 0
+        for p in self._unused:
+            try:
+                os.remove(p)
+                deleted += 1
+                utils.log(f"[PurgeUnused] Deleted: {p}")
+            except Exception as e:
+                utils.log(f"[PurgeUnused] Could not delete {p}: {e}")
+        self.report({'INFO'}, f"Purged {deleted} unused cel file(s).")
+        return {'FINISHED'}
 
 
 # ── Register ──────────────────────────────────────────────────────────────────
@@ -1059,6 +1188,7 @@ classes = [
     DOMEANIMATIC_OT_cel_clear,
     DOMEANIMATIC_OT_cel_delete,
     DOMEANIMATIC_OT_cel_save,
+    DOMEANIMATIC_OT_cel_purge_unused,
 ]
 
 

@@ -72,6 +72,18 @@ def draw_ui(box, context):
         transparent_cel.draw_row(col, wm, slot_id)
         col.separator(factor=0.2)
 
+    # ── Purge unused cel files ────────────────────────────────────────────────
+    box.separator(factor=0.3)
+    unused_count = transparent_cel._count_unused_cel_files()
+    purge_label  = f"Purge Unused ({unused_count})" if unused_count else "Purge Unused (0)"
+    purge_row    = box.row()
+    purge_row.enabled = unused_count > 0
+    purge_row.operator(
+        "domeanimatic.cel_purge_unused",
+        text=purge_label,
+        icon='TRASH',
+    )
+
 
 # ── Register / Unregister ─────────────────────────────────────────────────────
 
