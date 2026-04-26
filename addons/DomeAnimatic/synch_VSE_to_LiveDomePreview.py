@@ -367,7 +367,7 @@ class DOMEANIMATIC_OT_link_cel_nodes(bpy.types.Operator):
             ('Image Texture.003', 'CEL_B', 'cel_b'),
         ]
 
-        nodes = mat.node_tree.nodes
+        nodes     = mat.node_tree.nodes
         tex_lower = {n.name.lower(): n for n in nodes if n.type == 'TEX_IMAGE'}
 
         linked, missing = [], []
@@ -383,11 +383,14 @@ class DOMEANIMATIC_OT_link_cel_nodes(bpy.types.Operator):
             else:
                 missing.append(node_name)
 
+        # Build the set of slot_ids already successfully linked by name
+        # so the positional fallback only runs for genuinely missing ones.
+        linked_slot_ids = {NAMED_MAP[nm][0] for nm in NAMED_MAP if nm not in missing}
+
         # Positional fallback for any still-missing slots
         for node_name, slot_id, wm_suffix in POSITIONAL_MAP:
-            if slot_id in [s for _, s, _ in [(n, NAMED_MAP[n][0], NAMED_MAP[n][1])
-                           for n in NAMED_MAP] if n not in missing]:
-                continue  # already linked by name
+            if slot_id in linked_slot_ids:
+                continue  # already linked by name — skip
             node = nodes.get(node_name)
             if node is not None and node.type == 'TEX_IMAGE':
                 cel_img    = transparent_cel.get_or_create_cel_image(slot_id)
@@ -395,8 +398,9 @@ class DOMEANIMATIC_OT_link_cel_nodes(bpy.types.Operator):
                 setattr(wm, f"domeanimatic_{wm_suffix}_mat_image", cel_img)
                 if node.name not in linked:
                     linked.append(node.name)
-                if slot_id in [NAMED_MAP[m][0] for m in missing]:
-                    missing = [m for m in missing if NAMED_MAP[m][0] != slot_id]
+                # Remove from missing now that it's been handled positionally
+                missing = [m for m in missing if NAMED_MAP[m][0] != slot_id]
+                linked_slot_ids.add(slot_id)
                 utils.log(f"[LinkCelNodes] Positional '{node.name}' → '{cel_img.name}'")
 
         if missing:
@@ -465,7 +469,7 @@ def draw_ui(box, context):
     mode_row.operator("domeanimatic.synch_vse", text="", icon='FILE_REFRESH')
 
     # ── Material node setup — collapsible ─────────────────────────────────────
-    mat_box = box.box()
+    mat_box    = box.box()
     mat_header = mat_box.row()
     mat_header.prop(
         wm, "domeanimatic_mat_nodes_expanded",
@@ -517,7 +521,7 @@ classes = [
 
 def register():
     bpy.types.WindowManager.domeanimatic_mat_nodes_expanded = bpy.props.BoolProperty(
-        name="Material Nodes Expanded", default=False,  # closed by default
+        name="Material Nodes Expanded", default=False,
     )
     for cls in classes:
         bpy.utils.register_class(cls)

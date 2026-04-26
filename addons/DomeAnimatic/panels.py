@@ -1,4 +1,5 @@
 import bpy
+import datetime
 from . import (
     prepare_live_dome_texture,
     synch_VSE_to_LiveDomePreview,
@@ -9,6 +10,9 @@ from . import (
     transparent_cel_managment,
     fade_in_fade_out,
 )
+
+# Stamped at import time — updates on every addon reload
+ADDON_BUILD_TIME = datetime.datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
 
 VIEW_INFO_EDITORS = [
     ("DOMEANIMATIC_PT_view_info_VIEW3D",  "VIEW_3D"),
@@ -46,28 +50,40 @@ COLLAGE_EDITORS = [
 ]
 
 
+# ── Decorative build-time stamp operator (no-op) ──────────────────────────────
+
+class DOMEANIMATIC_OT_build_stamp(bpy.types.Operator):
+    """Shows when the addon was last loaded — click does nothing."""
+    bl_idname = "domeanimatic.build_stamp"
+    bl_label  = "Build Stamp"
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+
 # ── Panel 1: View Info ────────────────────────────────────────────────────────
 
 def draw_view_info_panel(self, context):
-    box  = self.layout.box()
-    row  = box.row(align=True)
-    wm   = bpy.data.window_managers[0]
+    box = self.layout.box()
+    wm  = bpy.data.window_managers[0]
 
-    # Show Development Infos toggle (stretches to fill)
+    # Row 1: build timestamp — greyed-out decorative box
+    row_time = box.row(align=True)
+    row_time.enabled = False
+    row_time.operator(
+        "domeanimatic.build_stamp",
+        text=f"Built:  {ADDON_BUILD_TIME}",
+        icon='TIME',
+    )
+
+    # Row 2: dev toggle + console + clear + debug — no separator
+    row = box.row(align=True)
     row.prop(wm, "domeanimatic_show_labels",
              text="Show Development Infos", toggle=True)
+    row.operator("wm.console_toggle",               text="", icon='CONSOLE')
+    row.operator("domeanimatic.clear_console",      text="", icon='TRASH')
+    row.operator("domeanimatic.debug_node_sockets", text="", icon='INFO')
 
-    # Toggle system console
-    row.operator("wm.console_toggle", text="", icon='CONSOLE')
-
-    # Clear console (print blank lines — no native op, use a small operator)
-    row.operator("domeanimatic.clear_console", text="", icon='TRASH')
-
-    # Debug buttons go here in future iterations (added by other modules)
-    row.operator(
-        "domeanimatic.debug_node_sockets",
-        text="", icon='INFO',
-    )
 
 panel_classes = []
 
@@ -181,9 +197,11 @@ for _idname, _space in COLLAGE_EDITORS:
 # ── Register ──────────────────────────────────────────────────────────────────
 
 def register():
+    bpy.utils.register_class(DOMEANIMATIC_OT_build_stamp)
     for cls in panel_classes:
         bpy.utils.register_class(cls)
 
 def unregister():
     for cls in reversed(panel_classes):
         bpy.utils.unregister_class(cls)
+    bpy.utils.unregister_class(DOMEANIMATIC_OT_build_stamp)
