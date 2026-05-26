@@ -13,4 +13,4 @@ dst = os.path.join(BLENDER_ADDONS, ADDON_NAME)
 
 os.makedirs(BLENDER_ADDONS, exist_ok=True)
 shutil.copytree(src, dst, dirs_exist_ok=True)
-print(f"✓ Deployed to: {dst}")
+print(f"[OK] Deployed to: {dst}")

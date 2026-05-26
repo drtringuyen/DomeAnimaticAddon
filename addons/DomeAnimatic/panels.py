@@ -1,207 +1,100 @@
+"""
+panels.py — Root panels for DomeAnimatic.
+
+DOMEANIMATIC_PT_infos  (bl_order=0, DEFAULT_CLOSED)
+  Row 1: Build timestamp  |  Reload
+  Row 2: Debug  |  Console  |  Clear
+  Debug-only block: version, module toggles, material picker
+
+DOMEANIMATIC_PT_main  (bl_order=1)
+  Parent panel — module sub-panels attach here via bl_parent_id.
+  When no module is loaded the panel body is empty.
+"""
+
 import bpy
-import datetime
-from . import (
-    prepare_live_dome_texture,
-    synch_VSE_to_LiveDomePreview,
-    capture_current_frame,
-    collage_texture,
-    prepare_collage_scene,
-    color_palette,
-    transparent_cel_managment,
-    fade_in_fade_out,
-)
-
-# Stamped at import time — updates on every addon reload
-ADDON_BUILD_TIME = datetime.datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
-
-VIEW_INFO_EDITORS = [
-    ("DOMEANIMATIC_PT_view_info_VIEW3D",  "VIEW_3D"),
-    ("DOMEANIMATIC_PT_view_info_VSE",     "SEQUENCE_EDITOR"),
-    ("DOMEANIMATIC_PT_view_info_IMAGE",   "IMAGE_EDITOR"),
-    ("DOMEANIMATIC_PT_view_info_NODE",    "NODE_EDITOR"),
-]
-
-DOME_EDITORS = [
-    ("DOMEANIMATIC_PT_main_VIEW3D", "VIEW_3D"),
-    ("DOMEANIMATIC_PT_main_VSE",    "SEQUENCE_EDITOR"),
-    ("DOMEANIMATIC_PT_main_IMAGE",  "IMAGE_EDITOR"),
-    ("DOMEANIMATIC_PT_main_NODE",   "NODE_EDITOR"),
-]
-
-SNAPSHOT_EDITORS = [
-    ("DOMEANIMATIC_PT_snapshot_VIEW3D", "VIEW_3D"),
-    ("DOMEANIMATIC_PT_snapshot_VSE",    "SEQUENCE_EDITOR"),
-    ("DOMEANIMATIC_PT_snapshot_IMAGE",  "IMAGE_EDITOR"),
-    ("DOMEANIMATIC_PT_snapshot_NODE",   "NODE_EDITOR"),
-]
-
-FADE_EDITORS = [
-    ("DOMEANIMATIC_PT_fade_VIEW3D", "VIEW_3D"),
-    ("DOMEANIMATIC_PT_fade_VSE",    "SEQUENCE_EDITOR"),
-    ("DOMEANIMATIC_PT_fade_IMAGE",  "IMAGE_EDITOR"),
-    ("DOMEANIMATIC_PT_fade_NODE",   "NODE_EDITOR"),
-]
-
-COLLAGE_EDITORS = [
-    ("DOMEANIMATIC_PT_collage_VIEW3D", "VIEW_3D"),
-    ("DOMEANIMATIC_PT_collage_VSE",    "SEQUENCE_EDITOR"),
-    ("DOMEANIMATIC_PT_collage_IMAGE",  "IMAGE_EDITOR"),
-    ("DOMEANIMATIC_PT_collage_NODE",   "NODE_EDITOR"),
-]
+from . import module_manager
+from .global_scene_shared_props import gp
 
 
-# ── Decorative build-time stamp operator (no-op) ──────────────────────────────
+# ── Infos panel ───────────────────────────────────────────────────────────────
 
-class DOMEANIMATIC_OT_build_stamp(bpy.types.Operator):
-    """Shows when the addon was last loaded — click does nothing."""
-    bl_idname = "domeanimatic.build_stamp"
-    bl_label  = "Build Stamp"
+class DOMEANIMATIC_PT_infos(bpy.types.Panel):
+    bl_label       = "Infos"
+    bl_idname      = "DOMEANIMATIC_PT_infos"
+    bl_space_type  = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category    = "DomeAnimatic"
+    bl_order       = 0
+    bl_options     = {'DEFAULT_CLOSED'}
 
-    def execute(self, context):
-        return {'FINISHED'}
+    def draw(self, context):
+        layout = self.layout
+        g      = gp(context)
 
+        # Row 1: build time + reload
+        row1 = layout.row(align=True)
+        row1.operator("domeanimatic.build_info", icon='TIME')
+        row1.operator("domeanimatic.reload_addon", text="", icon='FILE_REFRESH')
 
-# ── Panel 1: View Info ────────────────────────────────────────────────────────
+        # Row 2: debug / console / clear
+        row2 = layout.row(align=True)
+        row2.prop(g, "show_labels", text="Debug", toggle=True, icon='SCRIPT')
+        row2.operator("domeanimatic.toggle_console", text="", icon='CONSOLE')
+        row2.operator("domeanimatic.clear_console",  text="", icon='TRASH')
 
-def draw_view_info_panel(self, context):
-    box = self.layout.box()
-    wm  = bpy.data.window_managers[0]
+        if not g.show_labels:
+            return
 
-    # Row 1: build timestamp — greyed-out decorative box
-    row_time = box.row(align=True)
-    row_time.enabled = False
-    row_time.operator(
-        "domeanimatic.build_stamp",
-        text=f"Built:  {ADDON_BUILD_TIME}",
-        icon='TIME',
-    )
+        layout.separator(factor=0.3)
 
-    # Row 2: dev toggle + console + clear + debug — no separator
-    row = box.row(align=True)
-    row.prop(wm, "domeanimatic_show_labels",
-             text="Show Development Infos", toggle=True)
-    row.operator("wm.console_toggle",               text="", icon='CONSOLE')
-    row.operator("domeanimatic.clear_console",      text="", icon='TRASH')
-    row.operator("domeanimatic.debug_node_sockets", text="", icon='INFO')
+        # Module toggles
+        row3 = layout.row(align=True)
+        row3.label(text="Modules:")
+        for m in module_manager.ALL_MODULES:
+            sub = row3.row(align=True)
+            sub.active_default = module_manager.is_loaded(m["name"])
+            sub.operator(m["op"], text=m["name"].replace("_", " ").capitalize(),
+                         icon=m["icon"])
 
+        layout.separator(factor=0.3)
 
-panel_classes = []
-
-for _idname, _space in VIEW_INFO_EDITORS:
-    panel_classes.append(type(_idname, (bpy.types.Panel,), {
-        "bl_label":       "View Info",
-        "bl_idname":      _idname,
-        "bl_space_type":  _space,
-        "bl_region_type": "UI",
-        "bl_category":    "DomeAnimatic",
-        "draw":           draw_view_info_panel,
-    }))
-
-
-# ── Panel 2: Live Dome Texture ────────────────────────────────────────────────
-
-def draw_main_panel(self, context):
-    box = self.layout.box()
-    prepare_live_dome_texture.draw_ui(box, context)
-    synch_VSE_to_LiveDomePreview.draw_ui(box, context)
-
-for _idname, _space in DOME_EDITORS:
-    panel_classes.append(type(_idname, (bpy.types.Panel,), {
-        "bl_label":       "Live Dome Texture",
-        "bl_idname":      _idname,
-        "bl_space_type":  _space,
-        "bl_region_type": "UI",
-        "bl_category":    "DomeAnimatic",
-        "draw":           draw_main_panel,
-    }))
+        # Material + debug socket button
+        col = layout.column(align=True)
+        col.prop(g, "target_material", text="")
+        try:
+            col.operator("domeanimatic.debug_node_sockets", text="", icon='INFO')
+        except Exception:
+            pass
 
 
-# ── Panel 3: Frame Snap Shot ──────────────────────────────────────────────────
+# ── Main parent panel ─────────────────────────────────────────────────────────
 
-def make_snapshot_draw(space_type):
-    def draw_snapshot_panel(self, context):
-        box = self.layout.box()
-        capture_current_frame.draw_ui(box, context, space_type=space_type)
-        if space_type == 'IMAGE_EDITOR':
-            palette_box = self.layout.box()
-            color_palette.draw_ui(palette_box, context)
-    return draw_snapshot_panel
+class DOMEANIMATIC_PT_main(bpy.types.Panel):
+    bl_label       = "DomeAnimatic"
+    bl_idname      = "DOMEANIMATIC_PT_main"
+    bl_space_type  = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category    = "DomeAnimatic"
+    bl_order       = 1
 
-for _idname, _space in SNAPSHOT_EDITORS:
-    panel_classes.append(type(_idname, (bpy.types.Panel,), {
-        "bl_label":       "Frame Snap Shot",
-        "bl_idname":      _idname,
-        "bl_space_type":  _space,
-        "bl_region_type": "UI",
-        "bl_category":    "DomeAnimatic",
-        "bl_options":     {'DEFAULT_CLOSED'},
-        "draw":           make_snapshot_draw(_space),
-    }))
-
-
-# ── Panel 4: Transparent Cel (Image Editor only) ──────────────────────────────
-
-def draw_transparent_cel_panel(self, context):
-    box = self.layout.box()
-    transparent_cel_managment.draw_ui(box, context)
-
-panel_classes.append(type("DOMEANIMATIC_PT_transparent_cel_IMAGE", (bpy.types.Panel,), {
-    "bl_label":       "Transparent Cel",
-    "bl_idname":      "DOMEANIMATIC_PT_transparent_cel_IMAGE",
-    "bl_space_type":  "IMAGE_EDITOR",
-    "bl_region_type": "UI",
-    "bl_category":    "DomeAnimatic",
-    "bl_options":     {'DEFAULT_CLOSED'},
-    "draw":           draw_transparent_cel_panel,
-}))
-
-
-# ── Panel 5: Fade In / Fade Out ───────────────────────────────────────────────
-
-def draw_fade_panel(self, context):
-    box = self.layout.box()
-    fade_in_fade_out.draw_ui(box, context)
-
-for _idname, _space in FADE_EDITORS:
-    panel_classes.append(type(_idname, (bpy.types.Panel,), {
-        "bl_label":       "Fade In / Fade Out",
-        "bl_idname":      _idname,
-        "bl_space_type":  _space,
-        "bl_region_type": "UI",
-        "bl_category":    "DomeAnimatic",
-        "bl_options":     {'DEFAULT_CLOSED'},
-        "draw":           draw_fade_panel,
-    }))
-
-
-# ── Panel 6: Collage ──────────────────────────────────────────────────────────
-
-def draw_collage_panel(self, context):
-    box = self.layout.box()
-    collage_texture.draw_ui(box, context)
-    box.separator(factor=0.3)
-    prepare_collage_scene.draw_ui(box, context)
-
-for _idname, _space in COLLAGE_EDITORS:
-    panel_classes.append(type(_idname, (bpy.types.Panel,), {
-        "bl_label":       "Collage",
-        "bl_idname":      _idname,
-        "bl_space_type":  _space,
-        "bl_region_type": "UI",
-        "bl_category":    "DomeAnimatic",
-        "bl_options":     {'DEFAULT_CLOSED'},
-        "draw":           draw_collage_panel,
-    }))
+    def draw(self, context):
+        # Module sub-panels attach here; nothing to draw at the root level
+        pass
 
 
 # ── Register ──────────────────────────────────────────────────────────────────
 
+CLASSES = [
+    DOMEANIMATIC_PT_infos,
+    DOMEANIMATIC_PT_main,
+]
+
+
 def register():
-    bpy.utils.register_class(DOMEANIMATIC_OT_build_stamp)
-    for cls in panel_classes:
+    for cls in CLASSES:
         bpy.utils.register_class(cls)
 
+
 def unregister():
-    for cls in reversed(panel_classes):
+    for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
-    bpy.utils.unregister_class(DOMEANIMATIC_OT_build_stamp)

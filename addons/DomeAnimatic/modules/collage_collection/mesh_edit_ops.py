@@ -1,10 +1,19 @@
+"""
+mesh_edit_ops.py — Mesh editing operators for collage_collection module.
+
+Face-selection operations (duplicate, cut, content-aware delete) and
+layer Z-order movement. Ported from collage_manipulation.py.
+"""
+
 import bpy
 import bmesh
 
+from ...global_scene_shared_props import sp
 
-# ── Poll helper ───────────────────────────────────────────────────────────────
 
-def _poll_edit_face(context):
+# ── Poll / material helpers ───────────────────────────────────────────────────
+
+def _poll_edit_face(context) -> bool:
     obj = context.active_object
     if obj is None or obj.type != 'MESH':
         return False
@@ -13,8 +22,6 @@ def _poll_edit_face(context):
     bm = bmesh.from_edit_mesh(obj.data)
     return any(f.select for f in bm.faces)
 
-
-# ── Material helper ───────────────────────────────────────────────────────────
 
 def ensure_delete_material(color=(0.0, 0.0, 0.0)):
     mat = bpy.data.materials.get("DELETE")
@@ -34,16 +41,17 @@ def ensure_delete_material(color=(0.0, 0.0, 0.0)):
     return mat
 
 
-# ── Face selection save/restore ───────────────────────────────────────────────
+# ── Face selection save / restore ─────────────────────────────────────────────
 
-TEMP_GROUP = "__domeanimatic_sel__"
+_TEMP_GROUP = "__domeanimatic_sel__"
 
-def save_face_selection(obj):
+
+def save_face_selection(obj) -> None:
     mesh = obj.data
-    vg = obj.vertex_groups.get(TEMP_GROUP)
+    vg = obj.vertex_groups.get(_TEMP_GROUP)
     if vg:
         obj.vertex_groups.remove(vg)
-    vg = obj.vertex_groups.new(name=TEMP_GROUP)
+    vg = obj.vertex_groups.new(name=_TEMP_GROUP)
     bpy.ops.object.mode_set(mode='OBJECT')
     for poly in mesh.polygons:
         if poly.select:
@@ -51,14 +59,16 @@ def save_face_selection(obj):
                 vg.add([vi], 1.0, 'REPLACE')
     bpy.ops.object.mode_set(mode='EDIT')
 
-def restore_face_selection(obj):
-    vg = obj.vertex_groups.get(TEMP_GROUP)
+
+def restore_face_selection(obj) -> None:
+    vg = obj.vertex_groups.get(_TEMP_GROUP)
     if vg is None:
         return
     bpy.ops.object.mode_set(mode='OBJECT')
-    mesh    = obj.data
-    vg_idx  = vg.index
-    marked  = {v.index for v in mesh.vertices for g in v.groups if g.group == vg_idx and g.weight > 0.5}
+    mesh   = obj.data
+    vg_idx = vg.index
+    marked = {v.index for v in mesh.vertices
+              for g in v.groups if g.group == vg_idx and g.weight > 0.5}
     for poly in mesh.polygons:
         poly.select = all(vi in marked for vi in poly.vertices)
     bpy.ops.object.mode_set(mode='EDIT')
@@ -78,9 +88,9 @@ class DOMEANIMATIC_OT_duplicate_as_object(bpy.types.Operator):
         return _poll_edit_face(context)
 
     def execute(self, context):
-        spacing       = context.scene.domeanimatic_layer_spacing
-        original_obj  = context.active_object
-        original_name = original_obj.name
+        spacing        = sp().layer_spacing
+        original_obj   = context.active_object
+        original_name  = original_obj.name
         objects_before = set(bpy.data.objects.keys())
 
         bpy.ops.mesh.duplicate_move(
@@ -160,7 +170,7 @@ class DOMEANIMATIC_OT_content_aware_cut(bpy.types.Operator):
 
         objects_after = set(bpy.data.objects.keys())
         new_names     = objects_after - objects_before
-        new_obj       = bpy.data.objects.get(next(iter(new_names))) if new_names else None
+        new_obj = bpy.data.objects.get(next(iter(new_names))) if new_names else None
         if new_obj is None:
             self.report({'WARNING'}, "Could not find new object after cut.")
             return {'CANCELLED'}
@@ -199,12 +209,12 @@ class DOMEANIMATIC_OT_cut_fill_black(bpy.types.Operator):
 
         objects_after = set(bpy.data.objects.keys())
         new_names     = objects_after - objects_before
-        new_obj       = bpy.data.objects.get(next(iter(new_names))) if new_names else None
+        new_obj = bpy.data.objects.get(next(iter(new_names))) if new_names else None
         if new_obj is None:
             self.report({'WARNING'}, "Could not find new object.")
             return {'CANCELLED'}
 
-        color   = tuple(context.scene.domeanimatic_delete_color)
+        color   = tuple(sp().delete_color)
         del_mat = ensure_delete_material(color=color)
 
         bpy.ops.object.select_all(action='DESELECT')
@@ -248,36 +258,17 @@ class DOMEANIMATIC_OT_recover_face(bpy.types.Operator):
         return {'FINISHED'}
 
 
-# ── UI draw — used by frame_snap_shot only (no panel of its own) ──────────────
-
-def draw_handle_selected(layout, context):
-    """Compact face-op row for frame_snap_shot. No mark_face."""
-    is_dome = context.scene.name == "Dome Animatic"
-    row = layout.row(align=True)
-    row.scale_y = 1.5
-    row.enabled = not is_dome
-    row.operator("domeanimatic.recover_face",        text="", icon='RECOVER_LAST')
-    row.label(text="Handle Selected", icon='GREASEPENCIL_LAYER_GROUP')
-    sub = row.row(align=True)
-    sub.scale_x = 0.4
-    sub.prop(context.scene, "domeanimatic_delete_color", text="")
-    row.operator("domeanimatic.duplicate_as_object", text="", icon='SELECT_DIFFERENCE')
-    row.operator("domeanimatic.cut_fill_black",      text="", icon='SELECT_INTERSECT')
-
-
-# ── Layer move operators ──────────────────────────────────────────────────────
-
 class DOMEANIMATIC_OT_layer_move_up(bpy.types.Operator):
     bl_idname      = "domeanimatic.layer_move_up"
     bl_label       = "Move Object Up"
-    bl_description = "Move the active object up along global Z by Layer Spacing"
+    bl_description = "Move active object up along Z by Layer Spacing"
 
     @classmethod
     def poll(cls, context):
         return context.active_object is not None
 
     def execute(self, context):
-        spacing   = context.scene.domeanimatic_layer_spacing
+        spacing   = sp().layer_spacing
         prev_mode = context.mode
         if prev_mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
@@ -290,14 +281,14 @@ class DOMEANIMATIC_OT_layer_move_up(bpy.types.Operator):
 class DOMEANIMATIC_OT_layer_move_down(bpy.types.Operator):
     bl_idname      = "domeanimatic.layer_move_down"
     bl_label       = "Move Object Down"
-    bl_description = "Move the active object down along global Z by Layer Spacing"
+    bl_description = "Move active object down along Z by Layer Spacing"
 
     @classmethod
     def poll(cls, context):
         return context.active_object is not None
 
     def execute(self, context):
-        spacing   = context.scene.domeanimatic_layer_spacing
+        spacing   = sp().layer_spacing
         prev_mode = context.mode
         if prev_mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
@@ -309,7 +300,7 @@ class DOMEANIMATIC_OT_layer_move_down(bpy.types.Operator):
 
 # ── Register ──────────────────────────────────────────────────────────────────
 
-classes = [
+CLASSES = [
     DOMEANIMATIC_OT_duplicate_as_object,
     DOMEANIMATIC_OT_content_aware_delete,
     DOMEANIMATIC_OT_content_aware_cut,
@@ -319,10 +310,12 @@ classes = [
     DOMEANIMATIC_OT_layer_move_down,
 ]
 
+
 def register():
-    for cls in classes:
+    for cls in CLASSES:
         bpy.utils.register_class(cls)
 
+
 def unregister():
-    for cls in reversed(classes):
+    for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)

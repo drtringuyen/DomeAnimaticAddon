@@ -1,0 +1,7 @@
+{
+    "live_texture":       {"enabled": true},
+    "painting_cel":       {"enabled": true},
+    "collage_collection": {"enabled": true},
+    "transition_vfx":     {"enabled": true},
+    "extra_tools":        {"enabled": true}
+}
