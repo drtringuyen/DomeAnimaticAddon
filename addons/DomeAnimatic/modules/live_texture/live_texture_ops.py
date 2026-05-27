@@ -195,7 +195,6 @@ class DOMEANIMATIC_OT_live_texture_start_synch(bpy.types.Operator):
 
         vse_sync.start_live_sync()
         vse_sync.live_texture_sync_handler(dome_scene)
-        vse_sync.playhead_sync_handler(dome_scene)
         sp().synch_active = True
 
         g = gp(context)
@@ -314,8 +313,29 @@ class DOMEANIMATIC_OT_debug_node_sockets(bpy.types.Operator):
 
 # ── Internal helper ────────────────────────────────────────────────────────────
 
-def _set_menu_switch(g, socket_name: str) -> None:
+def _resolve_target_material(g):
+    """Return target_material, auto-detecting and storing it when unset."""
     mat = g.target_material
+    if mat is not None:
+        return mat
+    # try common names
+    for name in ("Dome_Animatic", "Dome Animatic", "DomeAnimatic"):
+        mat = bpy.data.materials.get(name)
+        if mat:
+            g.target_material = mat
+            vse_helpers.log(f"[LiveTexture] Auto-detected material: '{mat.name}'")
+            return mat
+    # fall back: find any material with a Menu Switch node
+    for mat in bpy.data.materials:
+        if mat.use_nodes and mat.node_tree.nodes.get("Menu Switch"):
+            g.target_material = mat
+            vse_helpers.log(f"[LiveTexture] Auto-detected material via Menu Switch: '{mat.name}'")
+            return mat
+    return None
+
+
+def _set_menu_switch(g, socket_name: str) -> None:
+    mat = _resolve_target_material(g)
     if mat is None or not mat.use_nodes:
         return
     node = mat.node_tree.nodes.get("Menu Switch")

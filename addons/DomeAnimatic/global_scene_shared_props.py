@@ -16,7 +16,9 @@ import bpy
 # ── Active cel change callback ────────────────────────────────────────────────
 
 def _on_active_cel_changed(self, context):
-    """Switch every open Image Editor to the newly selected cel datablock."""
+    """Switch every open Image Editor to the newly selected cel datablock.
+    In CEL_LAYERS mode also makes the matching TEX_IMAGE node active and
+    sets the scene paint canvas."""
     from . import cel_store
     layer = cel_store.BY_SLOT.get(self.active_cel)
     if layer is None:
@@ -31,6 +33,65 @@ def _on_active_cel_changed(self, context):
                     if space.type == 'IMAGE_EDITOR':
                         space.image = img
                         area.tag_redraw()
+    if self.synch_mode != 'CEL_LAYERS':
+        return
+    mat = self.target_material
+    if mat is not None and mat.use_nodes:
+        for node in mat.node_tree.nodes:
+            if node.type == 'TEX_IMAGE' and node.image == img:
+                mat.node_tree.nodes.active = node
+                break
+    dome_scene = bpy.data.scenes.get("Dome Animatic")
+    if dome_scene is not None:
+        try:
+            dome_scene.tool_settings.image_paint.canvas = img
+        except Exception:
+            pass
+
+
+# ── Synch mode change callback ────────────────────────────────────────────────
+
+def _on_synch_mode_changed(self, context):
+    """Redirect Image Editors (and 3D paint canvas in CEL_LAYERS) when the
+    sync mode is switched from the Live Texture panel."""
+    from . import cel_store
+    if self.synch_mode == 'BAKED':
+        live_img = cel_store.get_live_image()
+        if live_img is None:
+            return
+        for window in bpy.data.window_managers[0].windows:
+            for area in window.screen.areas:
+                if area.type == 'IMAGE_EDITOR':
+                    for space in area.spaces:
+                        if space.type == 'IMAGE_EDITOR':
+                            space.image = live_img
+                            area.tag_redraw()
+    elif self.synch_mode == 'CEL_LAYERS':
+        layer = cel_store.BY_SLOT.get(self.active_cel)
+        if layer is None:
+            return
+        img = bpy.data.images.get(layer.datablock_name)
+        if img is None:
+            return
+        for window in bpy.data.window_managers[0].windows:
+            for area in window.screen.areas:
+                if area.type == 'IMAGE_EDITOR':
+                    for space in area.spaces:
+                        if space.type == 'IMAGE_EDITOR':
+                            space.image = img
+                            area.tag_redraw()
+        mat = self.target_material
+        if mat is not None and mat.use_nodes:
+            for node in mat.node_tree.nodes:
+                if node.type == 'TEX_IMAGE' and node.image == img:
+                    mat.node_tree.nodes.active = node
+                    break
+        dome_scene = bpy.data.scenes.get("Dome Animatic")
+        if dome_scene is not None:
+            try:
+                dome_scene.tool_settings.image_paint.canvas = img
+            except Exception:
+                pass
 
 
 # ── Camera zoom callback (used by collage_collection module) ──────────────────
@@ -56,6 +117,11 @@ class DOMEANIMATICGlobalProps(bpy.types.PropertyGroup):
         description="The single Dome Animatic material shared across all scenes",
         type=bpy.types.Material,
     )
+    dome_object: bpy.props.PointerProperty(
+        name="Dome Object",
+        description="The mesh object to enter Texture Paint on when activating a cel slot",
+        type=bpy.types.Object,
+    )
     synch_mode: bpy.props.EnumProperty(
         name="Sync Mode",
         items=[
@@ -64,6 +130,7 @@ class DOMEANIMATICGlobalProps(bpy.types.PropertyGroup):
             ('OFF',        "Off",                  "No sync"),
         ],
         default='OFF',
+        update=_on_synch_mode_changed,
     )
     last_camera_zoom: bpy.props.FloatProperty(
         name="Last Camera Zoom",

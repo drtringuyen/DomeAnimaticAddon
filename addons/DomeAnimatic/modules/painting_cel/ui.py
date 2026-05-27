@@ -114,44 +114,41 @@ def draw_row(layout, g, slot_id: str) -> None:
     op.slot = slot_id
 
 
-class DOMEANIMATIC_PT_painting_cel(bpy.types.Panel):
-    bl_label       = "Painting Cel"
-    bl_idname      = "DOMEANIMATIC_PT_painting_cel"
-    bl_space_type  = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category    = "DomeAnimatic"
-    bl_parent_id   = "DOMEANIMATIC_PT_main"
-    bl_order       = 1
-    bl_options     = {'DEFAULT_CLOSED'}
+def _draw_painting_cel(self, context):
+    layout = self.layout
+    g      = gp(context)
 
-    def draw(self, context):
-        layout = self.layout
-        g      = gp(context)
+    # ── Cel folder + dome object ────────────────────────────────────────────
+    folder_box = layout.box()
+    row = folder_box.row(align=True)
+    row.label(text="Cel Folder:", icon='FILE_FOLDER')
+    try:
+        abs_folder = bpy.path.abspath(g.cel_folder)
+        exists = os.path.isdir(abs_folder)
+    except Exception:
+        exists = False
+    row.label(text="", icon='CHECKMARK' if exists else 'ERROR')
 
-        # ── Cel folder ─────────────────────────────────────────────────────────
-        folder_box = layout.box()
-        row = folder_box.row(align=True)
-        row.label(text="Cel Folder:", icon='FILE_FOLDER')
-        try:
-            abs_folder = bpy.path.abspath(g.cel_folder)
-            exists = os.path.isdir(abs_folder)
-        except Exception:
-            exists = False
-        row.label(text="", icon='CHECKMARK' if exists else 'ERROR')
+    folder_row = folder_box.row(align=True)
+    folder_row.prop(g, "cel_folder", text="")
+    folder_row.operator("domeanimatic.refresh_cel_folder", text="", icon='FILE_REFRESH')
 
-        folder_row = folder_box.row(align=True)
-        folder_row.prop(g, "cel_folder", text="")
-        folder_row.operator("domeanimatic.refresh_cel_folder", text="", icon='FILE_REFRESH')
+    dome_row = folder_box.row(align=True)
+    dome_row.label(text="Dome Object:")
+    dome_row.prop(g, "dome_object", text="")
 
-        layout.separator(factor=0.4)
+    layout.separator(factor=0.4)
 
-        # ── Three cel rows: CEL_B (top) → CEL_A → BG (bottom) ─────────────────
+    mode = g.synch_mode
+
+    if mode == 'CEL_LAYERS':
+        # ── Three cel rows: CEL_B (top) → CEL_A → BG (bottom) ───────────
         col = layout.column(align=False)
         for slot_id in reversed([layer.slot_id for layer in cel_store.DRAW_ORDER]):
             draw_row(col, g, slot_id)
             col.separator(factor=0.2)
 
-        # ── Purge unused ───────────────────────────────────────────────────────
+        # ── Purge unused ─────────────────────────────────────────────────
         layout.separator(factor=0.3)
         unused_count = _count_unused_cel_files()
         purge_row    = layout.row()
@@ -162,8 +159,41 @@ class DOMEANIMATIC_PT_painting_cel(bpy.types.Panel):
             icon='TRASH',
         )
 
+    elif mode == 'BAKED':
+        row = layout.row()
+        row.scale_y = 1.3
+        row.operator("domeanimatic.cel_show_baked",
+                     text="Baked: LiveDomePreview", icon='IMAGE_DATA')
 
-CLASSES = [DOMEANIMATIC_PT_painting_cel]
+    else:  # 'OFF'
+        layout.label(text="Enable sync to activate painting", icon='INFO')
+
+
+class DOMEANIMATIC_PT_painting_cel(bpy.types.Panel):
+    bl_label       = "Painting Cel"
+    bl_idname      = "DOMEANIMATIC_PT_painting_cel"
+    bl_space_type  = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category    = "DomeAnimatic"
+    bl_parent_id   = "DOMEANIMATIC_PT_main"
+    bl_order       = 1
+    bl_options     = {'DEFAULT_CLOSED'}
+    draw           = _draw_painting_cel
+
+
+class DOMEANIMATIC_PT_painting_cel_ie(bpy.types.Panel):
+    bl_label       = "Painting Cel"
+    bl_idname      = "DOMEANIMATIC_PT_painting_cel_ie"
+    bl_space_type  = 'IMAGE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category    = "DomeAnimatic"
+    bl_parent_id   = "DOMEANIMATIC_PT_main_ie"
+    bl_order       = 1
+    bl_options     = {'DEFAULT_CLOSED'}
+    draw           = _draw_painting_cel
+
+
+CLASSES = [DOMEANIMATIC_PT_painting_cel, DOMEANIMATIC_PT_painting_cel_ie]
 
 
 def register():

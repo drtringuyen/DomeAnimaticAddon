@@ -5,8 +5,8 @@ image datablocks.
 BAKED mode:      VSE channel 1  →  LiveDomePreview
 CEL_LAYERS mode: VSE channels 2/3/4  →  TransparentCel_BG/Cel_A/Cel_B
 
-_SyncState replaces the old module-level globals (_last_path, _handler_blocked,
-_last_dome_frame), making the state resettable without reloading the module.
+_SyncState replaces the old module-level globals (_last_path, _handler_blocked),
+making the state resettable without reloading the module.
 """
 
 import bpy
@@ -21,28 +21,12 @@ from ...global_scene_shared_props import gp
 class _SyncState:
     last_path:       dict[int, str] = {1: "", 2: "", 3: "", 4: ""}
     handler_blocked: bool           = False
-    last_dome_frame: int            = -1
 
 
 _s = _SyncState()
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
-
-def _set_material_menu_switch(socket_name: str) -> None:
-    """Drive the 'Menu Switch' node's Menu input to 'Baked' or 'Cels'."""
-    mat = gp().target_material
-    if mat is None or not mat.use_nodes:
-        return
-    node = mat.node_tree.nodes.get("Menu Switch")
-    if node is None:
-        return
-    try:
-        node.inputs[0].default_value = socket_name
-        vse_helpers.log(f"[LiveTexture] Menu Switch -> {socket_name}")
-    except Exception as e:
-        vse_helpers.log(f"[LiveTexture] Menu Switch error: {e}")
-
 
 def _load_path_into_image(datablock, abs_path: str) -> None:
     if datablock.packed_file is not None:
@@ -127,24 +111,6 @@ def live_texture_sync_handler(scene, depsgraph=None):
             vse_helpers.log(f"[LiveTexture] Ch{ch} ({layer.slot_id}) -> {os.path.basename(path)}")
 
 
-# ── Playhead sync handler ─────────────────────────────────────────────────────
-
-@persistent
-def playhead_sync_handler(scene, depsgraph=None):
-    if _s.handler_blocked:
-        return
-    dome_scene = bpy.data.scenes.get("Dome Animatic")
-    if dome_scene is None:
-        return
-    dome_frame = dome_scene.frame_current
-    if dome_frame == _s.last_dome_frame:
-        return
-    _s.last_dome_frame = dome_frame
-    for s in bpy.data.scenes:
-        if s is not dome_scene and s.frame_current != dome_frame:
-            s.frame_current = dome_frame
-
-
 # ── Scene-switch auto-pause/resume ────────────────────────────────────────────
 
 @persistent
@@ -180,18 +146,6 @@ def _register_frame_handler() -> None:
     bpy.app.handlers.frame_change_pre.append(live_texture_sync_handler)
 
 
-def _unregister_playhead_handler() -> None:
-    for lst in (bpy.app.handlers.frame_change_post,
-                bpy.app.handlers.depsgraph_update_post):
-        lst[:] = [h for h in lst
-                  if getattr(h, '__name__', '') != 'playhead_sync_handler']
-
-
-def _register_playhead_handler() -> None:
-    _unregister_playhead_handler()
-    bpy.app.handlers.frame_change_post.append(playhead_sync_handler)
-
-
 # ── Public API used by live_texture_ops ──────────────────────────────────────
 
 def block_handler() -> None:
@@ -201,25 +155,20 @@ def block_handler() -> None:
 def unblock_handler() -> None:
     _s.handler_blocked = False
     _s.last_path       = {1: "", 2: "", 3: "", 4: ""}
-    _s.last_dome_frame = -1
 
 
 def start_live_sync() -> None:
-    _s.last_path       = {1: "", 2: "", 3: "", 4: ""}
-    _s.last_dome_frame = -1
+    _s.last_path = {1: "", 2: "", 3: "", 4: ""}
     live = cel_store.get_or_create_live_image()
     if live.packed_file is not None:
         live.unpack(method='USE_ORIGINAL')
     live.source = 'FILE'
     _register_frame_handler()
-    _register_playhead_handler()
 
 
 def stop_live_sync() -> None:
     _unregister_frame_handler()
-    _unregister_playhead_handler()
-    _s.last_path       = {1: "", 2: "", 3: "", 4: ""}
-    _s.last_dome_frame = -1
+    _s.last_path = {1: "", 2: "", 3: "", 4: ""}
 
 
 def get_strip_on_channel(scene, channel: int, frame: int):

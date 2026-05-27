@@ -310,6 +310,26 @@ def set_image_editor_image(context, image) -> None:
                     area.tag_redraw()
 
 
+def set_paint_target(image: bpy.types.Image, mat=None) -> None:
+    """Set image as the active texture-paint target in the Dome Animatic scene.
+
+    Updates two independent systems that Blender checks:
+    - scene.tool_settings.image_paint.canvas  (IMAGE paint mode / header dropdown)
+    - the material's active Image Texture node (MATERIAL paint mode)
+    """
+    dome_scene = bpy.data.scenes.get("Dome Animatic")
+    if dome_scene is not None:
+        try:
+            dome_scene.tool_settings.image_paint.canvas = image
+        except Exception:
+            pass
+    if mat is not None and mat.use_nodes:
+        for node in mat.node_tree.nodes:
+            if node.type == 'TEX_IMAGE' and node.image == image:
+                mat.node_tree.nodes.active = node
+                break
+
+
 def tag_all_image_editors_redraw() -> None:
     for window in bpy.context.window_manager.windows:
         for area in window.screen.areas:

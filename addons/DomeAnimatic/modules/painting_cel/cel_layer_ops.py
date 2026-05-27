@@ -21,12 +21,8 @@ from . import image_io
 # ── Active-slot helper ────────────────────────────────────────────────────────
 
 def activate_slot(slot_id: str) -> None:
-    """Set slot as active and switch Image Editor to its datablock."""
-    g   = gp()
-    g.active_cel = slot_id
-    img = cel_store.get_cel_image(slot_id)
-    if img:
-        vse_helpers.set_image_editor_image(bpy.context, img)
+    """Set slot as active — triggers _on_active_cel_changed for Image Editor + canvas."""
+    gp().active_cel = slot_id
 
 
 # ── Cel folder operator ───────────────────────────────────────────────────────
@@ -60,22 +56,120 @@ class DOMEANIMATIC_OT_refresh_cel_folder(bpy.types.Operator):
 # ── Visibility operators ──────────────────────────────────────────────────────
 
 class DOMEANIMATIC_OT_cel_set_active(bpy.types.Operator):
-    """Set this slot as the active (paintable) cel. If invisible, turns eye on."""
+    """Set this slot as the active (paintable) cel and enter Texture Paint."""
     bl_idname = "domeanimatic.cel_set_active"
     bl_label  = "Set Active Cel"
 
     slot: bpy.props.StringProperty()
 
     def execute(self, context):
-        g        = gp(context)
+        g = gp(context)
+
+        if g.synch_mode == 'BAKED':
+            return {'FINISHED'}
+
+        if g.dome_object is None:
+            bpy.ops.domeanimatic.dome_object_picker('INVOKE_DEFAULT')
+            return {'FINISHED'}
+
+        # Find first VIEW_3D area across all windows
+        view3d_window = view3d_area = view3d_region = None
+        for window in context.window_manager.windows:
+            for area in window.screen.areas:
+                if area.type == 'VIEW_3D':
+                    for region in area.regions:
+                        if region.type == 'WINDOW':
+                            view3d_window = window
+                            view3d_area   = area
+                            view3d_region = region
+                            break
+                if view3d_area:
+                    break
+            if view3d_area:
+                break
+
+        if view3d_area and view3d_region:
+            with context.temp_override(window=view3d_window, area=view3d_area, region=view3d_region):
+                for obj in context.view_layer.objects:
+                    obj.select_set(False)
+                g.dome_object.select_set(True)
+                context.view_layer.objects.active = g.dome_object
+                bpy.ops.object.mode_set(mode='TEXTURE_PAINT')
+
+        # Set active cel — triggers _on_active_cel_changed (Image Editor + canvas redirect)
+        g.active_cel = self.slot
+
+        # Proactive invisible-layer warning
         slot_key = self.slot.lower()
         if not getattr(g, f"{slot_key}_visible", True):
-            setattr(g, f"{slot_key}_visible", True)
-            vse_helpers.tag_all_image_editors_redraw()
-        g.active_cel = self.slot
-        img = cel_store.get_cel_image(self.slot)
-        if img:
-            vse_helpers.set_image_editor_image(context, img)
+            bpy.ops.domeanimatic.cel_invisible_warning('INVOKE_DEFAULT')
+
+        return {'FINISHED'}
+
+
+class DOMEANIMATIC_OT_dome_object_picker(bpy.types.Operator):
+    """Auto-assign or pick the dome mesh for texture painting."""
+    bl_idname  = "domeanimatic.dome_object_picker"
+    bl_label   = "Pick Dome Object"
+    bl_options = {'INTERNAL'}
+
+    dome_object: bpy.props.PointerProperty(
+        name="Dome Object",
+        type=bpy.types.Object,
+    )
+
+    _candidates: list = []
+
+    def invoke(self, context, event):
+        g          = gp(context)
+        dome_scene = bpy.data.scenes.get("Dome Animatic")
+        if dome_scene is None:
+            self.report({'ERROR'}, "Dome Animatic scene not found.")
+            return {'CANCELLED'}
+
+        mat        = g.target_material
+        candidates = []
+        for obj in dome_scene.objects:
+            if obj.type != 'MESH':
+                continue
+            for ms in obj.material_slots:
+                if ms.material == mat:
+                    candidates.append(obj)
+                    break
+
+        DOMEANIMATIC_OT_dome_object_picker._candidates = candidates
+
+        if len(candidates) == 0:
+            self.report({'ERROR'},
+                        "No mesh object with the Dome Animatic material found in Dome Animatic scene.")
+            return {'CANCELLED'}
+
+        if len(candidates) == 1:
+            g.dome_object = candidates[0]
+            return {'FINISHED'}
+
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        self.layout.prop(self, "dome_object", text="Dome Object")
+
+    def execute(self, context):
+        if self.dome_object is None:
+            self.report({'WARNING'}, "No object selected.")
+            return {'CANCELLED'}
+        gp(context).dome_object = self.dome_object
+        return {'FINISHED'}
+
+
+class DOMEANIMATIC_OT_cel_show_baked(bpy.types.Operator):
+    """Show LiveDomePreview in Image Editors (BAKED mode row)."""
+    bl_idname = "domeanimatic.cel_show_baked"
+    bl_label  = "Show Baked Preview"
+
+    def execute(self, context):
+        live_img = cel_store.get_live_image()
+        if live_img:
+            vse_helpers.set_image_editor_image(context, live_img)
         return {'FINISHED'}
 
 
@@ -478,6 +572,8 @@ CLASSES = [
     DOMEANIMATIC_OT_refresh_cel_folder,
     DOMEANIMATIC_OT_cel_set_active,
     DOMEANIMATIC_OT_cel_toggle_visible,
+    DOMEANIMATIC_OT_dome_object_picker,
+    DOMEANIMATIC_OT_cel_show_baked,
     DOMEANIMATIC_OT_cel_insert_full,
     DOMEANIMATIC_OT_cel_insert_cut,
     DOMEANIMATIC_OT_cel_delete,

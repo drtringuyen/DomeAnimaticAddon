@@ -227,7 +227,6 @@ def load_slot_from_vse(slot_id: str, w: int, h: int) -> None:
     path = vse_helpers.resolve_strip_image_path(strip, frame)
     if path and os.path.exists(path):
         load_abs_into_slot(slot_id, path, w, h)
-        gp().bg_filepath if slot_id == 'BG' else None  # access via setattr below
         slot_key = slot_id.lower()
         setattr(gp(), f"{slot_key}_filepath", path)
         vse_helpers.log(f"[PaintingCel] Loaded from VSE: {path}")

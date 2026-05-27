@@ -9,17 +9,7 @@ from ... import vse_helpers
 from ...global_scene_shared_props import gp, sp
 
 
-class DOMEANIMATIC_PT_collage_collection(bpy.types.Panel):
-    bl_label       = "Collage Collection"
-    bl_idname      = "DOMEANIMATIC_PT_collage_collection"
-    bl_space_type  = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category    = "DomeAnimatic"
-    bl_parent_id   = "DOMEANIMATIC_PT_main"
-    bl_order       = 2
-    bl_options     = {'DEFAULT_CLOSED'}
-
-    def draw(self, context):
+def _draw_collage_collection(self, context):
         layout  = self.layout
         s       = sp()
         g       = gp(context)
@@ -135,7 +125,31 @@ class DOMEANIMATIC_PT_collage_collection(bpy.types.Panel):
                     op.scene_name = scene.name
 
 
-CLASSES = [DOMEANIMATIC_PT_collage_collection]
+class DOMEANIMATIC_PT_collage_collection(bpy.types.Panel):
+    bl_label       = "Collage Collection"
+    bl_idname      = "DOMEANIMATIC_PT_collage_collection"
+    bl_space_type  = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category    = "DomeAnimatic"
+    bl_parent_id   = "DOMEANIMATIC_PT_main"
+    bl_order       = 2
+    bl_options     = {'DEFAULT_CLOSED'}
+    draw           = _draw_collage_collection
+
+
+class DOMEANIMATIC_PT_collage_collection_ie(bpy.types.Panel):
+    bl_label       = "Collage Collection"
+    bl_idname      = "DOMEANIMATIC_PT_collage_collection_ie"
+    bl_space_type  = 'IMAGE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category    = "DomeAnimatic"
+    bl_parent_id   = "DOMEANIMATIC_PT_main_ie"
+    bl_order       = 2
+    bl_options     = {'DEFAULT_CLOSED'}
+    draw           = _draw_collage_collection
+
+
+CLASSES = [DOMEANIMATIC_PT_collage_collection, DOMEANIMATIC_PT_collage_collection_ie]
 
 
 def register():

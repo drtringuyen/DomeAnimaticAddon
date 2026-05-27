@@ -8,17 +8,7 @@ from ...global_scene_shared_props import gp, sp
 from . import mix_node_sync
 
 
-class DOMEANIMATIC_PT_transition_vfx(bpy.types.Panel):
-    bl_label       = "Transition VFX"
-    bl_idname      = "DOMEANIMATIC_PT_transition_vfx"
-    bl_space_type  = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category    = "DomeAnimatic"
-    bl_parent_id   = "DOMEANIMATIC_PT_main"
-    bl_order       = 3
-    bl_options     = {'DEFAULT_CLOSED'}
-
-    def draw(self, context):
+def _draw_transition_vfx(self, context):
         layout = self.layout
         s      = sp()
         g      = gp(context)
@@ -79,7 +69,31 @@ class DOMEANIMATIC_PT_transition_vfx(bpy.types.Panel):
                 info.label(text=f"a:{strip_b.blend_alpha:.3f}", icon='IMAGE_ALPHA')
 
 
-CLASSES = [DOMEANIMATIC_PT_transition_vfx]
+class DOMEANIMATIC_PT_transition_vfx(bpy.types.Panel):
+    bl_label       = "Transition VFX"
+    bl_idname      = "DOMEANIMATIC_PT_transition_vfx"
+    bl_space_type  = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category    = "DomeAnimatic"
+    bl_parent_id   = "DOMEANIMATIC_PT_main"
+    bl_order       = 3
+    bl_options     = {'DEFAULT_CLOSED'}
+    draw           = _draw_transition_vfx
+
+
+class DOMEANIMATIC_PT_transition_vfx_ie(bpy.types.Panel):
+    bl_label       = "Transition VFX"
+    bl_idname      = "DOMEANIMATIC_PT_transition_vfx_ie"
+    bl_space_type  = 'IMAGE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category    = "DomeAnimatic"
+    bl_parent_id   = "DOMEANIMATIC_PT_main_ie"
+    bl_order       = 3
+    bl_options     = {'DEFAULT_CLOSED'}
+    draw           = _draw_transition_vfx
+
+
+CLASSES = [DOMEANIMATIC_PT_transition_vfx, DOMEANIMATIC_PT_transition_vfx_ie]
 
 
 def register():

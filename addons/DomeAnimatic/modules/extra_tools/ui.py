@@ -7,17 +7,7 @@ Currently provides the color palette for image painting.
 import bpy
 
 
-class DOMEANIMATIC_PT_extra_tools(bpy.types.Panel):
-    bl_label       = "Extra Tools"
-    bl_idname      = "DOMEANIMATIC_PT_extra_tools"
-    bl_space_type  = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category    = "DomeAnimatic"
-    bl_parent_id   = "DOMEANIMATIC_PT_main"
-    bl_order       = 4
-    bl_options     = {'DEFAULT_CLOSED'}
-
-    def draw(self, context):
+def _draw_extra_tools(self, context):
         layout      = self.layout
         ts          = context.tool_settings
         image_paint = ts.image_paint
@@ -31,7 +21,31 @@ class DOMEANIMATIC_PT_extra_tools(bpy.types.Panel):
             col.template_palette(image_paint, "palette", color=True)
 
 
-CLASSES = [DOMEANIMATIC_PT_extra_tools]
+class DOMEANIMATIC_PT_extra_tools(bpy.types.Panel):
+    bl_label       = "Extra Tools"
+    bl_idname      = "DOMEANIMATIC_PT_extra_tools"
+    bl_space_type  = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category    = "DomeAnimatic"
+    bl_parent_id   = "DOMEANIMATIC_PT_main"
+    bl_order       = 4
+    bl_options     = {'DEFAULT_CLOSED'}
+    draw           = _draw_extra_tools
+
+
+class DOMEANIMATIC_PT_extra_tools_ie(bpy.types.Panel):
+    bl_label       = "Extra Tools"
+    bl_idname      = "DOMEANIMATIC_PT_extra_tools_ie"
+    bl_space_type  = 'IMAGE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category    = "DomeAnimatic"
+    bl_parent_id   = "DOMEANIMATIC_PT_main_ie"
+    bl_order       = 4
+    bl_options     = {'DEFAULT_CLOSED'}
+    draw           = _draw_extra_tools
+
+
+CLASSES = [DOMEANIMATIC_PT_extra_tools, DOMEANIMATIC_PT_extra_tools_ie]
 
 
 def register():

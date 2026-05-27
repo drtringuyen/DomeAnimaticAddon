@@ -9,6 +9,10 @@ DOMEANIMATIC_PT_infos  (bl_order=0, DEFAULT_CLOSED)
 DOMEANIMATIC_PT_main  (bl_order=1)
   Parent panel — module sub-panels attach here via bl_parent_id.
   When no module is loaded the panel body is empty.
+
+Each panel is mirrored for IMAGE_EDITOR via a sibling class that shares the
+same draw function. Inheritance from registered Panel subclasses is intentionally
+avoided — Blender 5.x cannot resolve inherited draw callbacks on subclasses.
 """
 
 import bpy
@@ -16,7 +20,49 @@ from . import module_manager
 from .global_scene_shared_props import gp
 
 
-# ── Infos panel ───────────────────────────────────────────────────────────────
+# ── Shared draw functions ─────────────────────────────────────────────────────
+
+def _draw_infos(self, context):
+    layout = self.layout
+    g      = gp(context)
+
+    row1 = layout.row(align=True)
+    row1.operator("domeanimatic.build_info", icon='TIME')
+    row1.operator("domeanimatic.reload_addon", text="", icon='FILE_REFRESH')
+
+    row2 = layout.row(align=True)
+    row2.prop(g, "show_labels", text="Debug", toggle=True, icon='SCRIPT')
+    row2.operator("domeanimatic.toggle_console", text="", icon='CONSOLE')
+    row2.operator("domeanimatic.clear_console",  text="", icon='TRASH')
+
+    if not g.show_labels:
+        return
+
+    layout.separator(factor=0.3)
+
+    row3 = layout.row(align=True)
+    row3.label(text="Modules:")
+    for m in module_manager.ALL_MODULES:
+        sub = row3.row(align=True)
+        sub.active_default = module_manager.is_loaded(m["name"])
+        sub.operator(m["op"], text=m["name"].replace("_", " ").capitalize(),
+                     icon=m["icon"])
+
+    layout.separator(factor=0.3)
+
+    col = layout.column(align=True)
+    col.prop(g, "target_material", text="")
+    try:
+        col.operator("domeanimatic.debug_node_sockets", text="", icon='INFO')
+    except Exception:
+        pass
+
+
+def _draw_main(self, context):
+    pass  # module sub-panels attach here via bl_parent_id
+
+
+# ── Infos panels ──────────────────────────────────────────────────────────────
 
 class DOMEANIMATIC_PT_infos(bpy.types.Panel):
     bl_label       = "Infos"
@@ -26,48 +72,21 @@ class DOMEANIMATIC_PT_infos(bpy.types.Panel):
     bl_category    = "DomeAnimatic"
     bl_order       = 0
     bl_options     = {'DEFAULT_CLOSED'}
-
-    def draw(self, context):
-        layout = self.layout
-        g      = gp(context)
-
-        # Row 1: build time + reload
-        row1 = layout.row(align=True)
-        row1.operator("domeanimatic.build_info", icon='TIME')
-        row1.operator("domeanimatic.reload_addon", text="", icon='FILE_REFRESH')
-
-        # Row 2: debug / console / clear
-        row2 = layout.row(align=True)
-        row2.prop(g, "show_labels", text="Debug", toggle=True, icon='SCRIPT')
-        row2.operator("domeanimatic.toggle_console", text="", icon='CONSOLE')
-        row2.operator("domeanimatic.clear_console",  text="", icon='TRASH')
-
-        if not g.show_labels:
-            return
-
-        layout.separator(factor=0.3)
-
-        # Module toggles
-        row3 = layout.row(align=True)
-        row3.label(text="Modules:")
-        for m in module_manager.ALL_MODULES:
-            sub = row3.row(align=True)
-            sub.active_default = module_manager.is_loaded(m["name"])
-            sub.operator(m["op"], text=m["name"].replace("_", " ").capitalize(),
-                         icon=m["icon"])
-
-        layout.separator(factor=0.3)
-
-        # Material + debug socket button
-        col = layout.column(align=True)
-        col.prop(g, "target_material", text="")
-        try:
-            col.operator("domeanimatic.debug_node_sockets", text="", icon='INFO')
-        except Exception:
-            pass
+    draw           = _draw_infos
 
 
-# ── Main parent panel ─────────────────────────────────────────────────────────
+class DOMEANIMATIC_PT_infos_ie(bpy.types.Panel):
+    bl_label       = "Infos"
+    bl_idname      = "DOMEANIMATIC_PT_infos_ie"
+    bl_space_type  = 'IMAGE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category    = "DomeAnimatic"
+    bl_order       = 0
+    bl_options     = {'DEFAULT_CLOSED'}
+    draw           = _draw_infos
+
+
+# ── Main parent panels ────────────────────────────────────────────────────────
 
 class DOMEANIMATIC_PT_main(bpy.types.Panel):
     bl_label       = "DomeAnimatic"
@@ -76,10 +95,17 @@ class DOMEANIMATIC_PT_main(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category    = "DomeAnimatic"
     bl_order       = 1
+    draw           = _draw_main
 
-    def draw(self, context):
-        # Module sub-panels attach here; nothing to draw at the root level
-        pass
+
+class DOMEANIMATIC_PT_main_ie(bpy.types.Panel):
+    bl_label       = "DomeAnimatic"
+    bl_idname      = "DOMEANIMATIC_PT_main_ie"
+    bl_space_type  = 'IMAGE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category    = "DomeAnimatic"
+    bl_order       = 1
+    draw           = _draw_main
 
 
 # ── Register ──────────────────────────────────────────────────────────────────
@@ -87,6 +113,8 @@ class DOMEANIMATIC_PT_main(bpy.types.Panel):
 CLASSES = [
     DOMEANIMATIC_PT_infos,
     DOMEANIMATIC_PT_main,
+    DOMEANIMATIC_PT_infos_ie,
+    DOMEANIMATIC_PT_main_ie,
 ]
 
 
