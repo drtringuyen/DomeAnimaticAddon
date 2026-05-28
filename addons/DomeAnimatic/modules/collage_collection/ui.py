@@ -3,43 +3,47 @@ ui.py — Collage Collection sub-panel (child of the main DomeAnimatic panel).
 """
 
 import bpy
-import os
 
 from ... import vse_helpers
 from ...global_scene_shared_props import gp, sp
+from . import collection_ops
 
 
 def _draw_collage_collection(self, context):
-        layout  = self.layout
-        s       = sp()
-        g       = gp(context)
-        verbose = g.show_labels
-        is_dome = context.scene.name == "Dome Animatic"
+        layout      = self.layout
+        s           = sp()
+        g           = gp(context)
+        verbose     = g.show_labels
+        is_overview = g.active_collage == ""
+
+        # Collect all tagged collage collections once — used in multiple places
+        collage_colls = collection_ops.get_collage_collections()
+        no_collages   = len(collage_colls) == 0
 
         # ── Verbose info ───────────────────────────────────────────────────────
         if verbose:
             scene_name, filepath = vse_helpers.get_current_scene_frame_info(context.scene)
-            closest, score = vse_helpers.find_closest_scene(scene_name) if scene_name else (None, 0)
+            closest, score = vse_helpers.find_closest_collage(scene_name) if scene_name else (None, 0)
             info_col = layout.column(align=True)
             info_col.enabled = False
             if closest:
-                info_col.label(text=f"Closest: {closest}", icon='SCENE_DATA')
+                info_col.label(text=f"Closest: {closest}", icon='OUTLINER_COLLECTION')
             else:
-                info_col.label(text="No matching scene found", icon='INFO')
+                info_col.label(text="No matching collage found", icon='INFO')
             if scene_name:
-                if scene_name in bpy.data.scenes:
+                coll = bpy.data.collections.get(scene_name)
+                if coll and coll.domeanimatic.is_collage:
                     info_col.label(text=f"'{scene_name}' already exists", icon='INFO')
                 else:
-                    info_col.label(text=f"New scene: {scene_name}", icon='ADD')
+                    info_col.label(text=f"New collage: {scene_name}", icon='ADD')
             else:
                 info_col.label(text="No image at current frame", icon='ERROR')
             layout.separator(factor=0.3)
 
         # ── Load buttons ───────────────────────────────────────────────────────
-        only_dome = len(bpy.data.scenes) <= 1
-        row = layout.row(align=True)
+        row      = layout.row(align=True)
         load_row = row.row(align=True)
-        load_row.enabled = not only_dome
+        load_row.enabled = not no_collages
         load_row.operator("domeanimatic.load_closest_scene",
                           text="Nearest Collage", icon='FILE_REFRESH')
         row.operator("domeanimatic.load_dome_animatic",
@@ -52,17 +56,22 @@ def _draw_collage_collection(self, context):
 
         # ── Object / Material / Image slots ────────────────────────────────────
         slots_row = layout.row(align=True)
-        slots_row.enabled = not is_dome
-        slots_row.prop(s, "target_object",   text="", icon='OBJECT_DATA')
-        slots_row.prop(s, "target_material", text="", icon='MATERIAL')
-        slots_row.prop(s, "target_image",    text="", icon='IMAGE_DATA')
-        slots_row.operator("domeanimatic.assign_target_image", text="", icon='FILE_REFRESH')
+        active_coll = bpy.data.collections.get(g.active_collage)
+        if active_coll:
+            cd = active_coll.domeanimatic
+            slots_row.prop(cd, "target_object",   text="", icon='OBJECT_DATA')
+            slots_row.prop(cd, "target_material", text="", icon='MATERIAL')
+            slots_row.prop(cd, "target_image",    text="", icon='IMAGE_DATA')
+            slots_row.operator("domeanimatic.assign_target_image", text="", icon='FILE_REFRESH')
+        else:
+            slots_row.enabled = False
+            slots_row.label(text="No active collage", icon='INFO')
 
-        # ── Create Collage Scene ───────────────────────────────────────────────
+        # ── Create Collage ─────────────────────────────────────────────────────
         col = layout.column()
         col.scale_y = 1.5
         col.operator("domeanimatic.prepare_collage_scene",
-                     text="Create Collage Scene", icon='SCULPTMODE_HLT')
+                     text="Create Collage", icon='SCULPTMODE_HLT')
 
         # ── Save / capture row ─────────────────────────────────────────────────
         layout.separator(factor=0.3)
@@ -77,7 +86,7 @@ def _draw_collage_collection(self, context):
         # ── Handle Selected + layer move ───────────────────────────────────────
         row2 = layout.row(align=True)
         row2.scale_y = 1.5
-        row2.enabled = not is_dome
+        row2.enabled = not is_overview
         row2.operator("domeanimatic.recover_face",        text="", icon='RECOVER_LAST')
         row2.label(text="Handle Selected", icon='GREASEPENCIL_LAYER_GROUP')
         sub = row2.row(align=True)
@@ -104,7 +113,7 @@ def _draw_collage_collection(self, context):
             lay_box.prop(s, "layer_spacing")
             lay_box.prop(s, "delete_color")
 
-        # ── Scene list — collapsible ───────────────────────────────────────────
+        # ── Collage list — collapsible ─────────────────────────────────────────
         sub_box = layout.box()
         sub_row = sub_box.row()
         sub_row.prop(
@@ -112,17 +121,17 @@ def _draw_collage_collection(self, context):
             icon='TRIA_DOWN' if s.manual_scene_expanded else 'TRIA_RIGHT',
             icon_only=True, emboss=False,
         )
-        sub_row.label(text="Scene List", icon='SCENE_DATA')
+        sub_row.label(text="Collage List", icon='OUTLINER_COLLECTION')
         if s.manual_scene_expanded:
-            for scene in bpy.data.scenes:
+            for coll in collage_colls:
                 row = sub_box.row(align=True)
-                if scene.name == context.scene.name:
+                if coll.name == g.active_collage:
                     row.enabled = False
-                    row.label(text=scene.name, icon='SCENE_DATA')
+                    row.label(text=coll.name, icon='OUTLINER_COLLECTION')
                 else:
                     op = sub_box.operator("domeanimatic.switch_scene",
-                                          text=scene.name, icon='SCENE_DATA')
-                    op.scene_name = scene.name
+                                          text=coll.name, icon='OUTLINER_COLLECTION')
+                    op.scene_name = coll.name
 
 
 class DOMEANIMATIC_PT_collage_collection(bpy.types.Panel):

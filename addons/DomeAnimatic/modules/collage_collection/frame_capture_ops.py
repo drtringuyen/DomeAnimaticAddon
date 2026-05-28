@@ -12,6 +12,7 @@ import tempfile
 
 from ... import cel_store, vse_helpers
 from ...global_scene_shared_props import gp
+from . import collection_ops
 
 
 # ── Live sync soft-dependency helpers ─────────────────────────────────────────
@@ -41,7 +42,7 @@ class DOMEANIMATIC_OT_render_to_live_preview(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.scene.name != "Dome Animatic"
+        return gp(context).active_collage != ""
 
     def execute(self, context):
         try:
@@ -159,8 +160,7 @@ class DOMEANIMATIC_OT_capture_current_frame(bpy.types.Operator):
             self.original_filepath = filepath
             self.has_vse           = True
         else:
-            dome_scene = bpy.data.scenes.get("Dome Animatic")
-            frame = dome_scene.frame_current if dome_scene else context.scene.frame_current
+            frame                  = context.scene.frame_current
             self.directory         = bpy.path.abspath("//")
             self.filename          = f"frame_{frame:04d}.png"
             self.filepath          = os.path.join(self.directory, self.filename)
@@ -226,20 +226,19 @@ class DOMEANIMATIC_OT_capture_current_frame(bpy.types.Operator):
             src_img.reload()
             return {'FINISHED'}
 
-        dome_scene = bpy.data.scenes.get("Dome Animatic")
-        if dome_scene is None:
-            return {'FINISHED'}
-        frame = dome_scene.frame_current
-        strip = vse_helpers.get_active_strip_at_frame(dome_scene, frame)
+        # Always in the "Dome Animatic" scene — use context.scene directly
+        scene = context.scene
+        frame = scene.frame_current
+        strip = vse_helpers.get_active_strip_at_frame(scene, frame)
         if strip is None or strip.type not in ('IMAGE', 'MOVIE'):
             return {'FINISHED'}
-        seq = dome_scene.sequence_editor
+        seq = scene.sequence_editor
         if frame <= strip.frame_final_start:
             return {'FINISHED'}
 
-        orig_end         = strip.frame_final_end
-        channel          = strip.channel
-        new_filename     = os.path.splitext(os.path.basename(new_filepath))[0]
+        orig_end              = strip.frame_final_end
+        channel               = strip.channel
+        new_filename          = os.path.splitext(os.path.basename(new_filepath))[0]
         strip.frame_final_end = frame
 
         new_strip = seq.strips.new_image(
@@ -254,41 +253,36 @@ class DOMEANIMATIC_OT_capture_current_frame(bpy.types.Operator):
 class DOMEANIMATIC_OT_switch_dome_collage(bpy.types.Operator):
     bl_idname      = "domeanimatic.switch_dome_collage"
     bl_label       = "Switch Dome / Collage"
-    bl_description = "Switch to Nearest Collage scene or back to Dome Animatic"
+    bl_description = "Switch to Nearest Collage or back to overview"
 
     @classmethod
     def description(cls, context, properties):
-        if context.scene.name == "Dome Animatic":
+        g = gp(context)
+        if g.active_collage == "":
             name, _, _, _ = vse_helpers.get_dome_animatic_frame_info()
-            closest, score = vse_helpers.find_closest_scene(name) if name else (None, 0)
-            if closest and closest != "Dome Animatic":
+            closest, score = vse_helpers.find_closest_collage(name) if name else (None, 0)
+            if closest:
                 return f"Switch to nearest collage: '{closest}'"
-            return "No nearest collage scene found"
-        return "Switch back to 'Dome Animatic'"
+            return "No nearest collage found"
+        return f"Return to overview (from '{g.active_collage}')"
 
     def execute(self, context):
-        if context.scene.name == "Dome Animatic":
-            vse_helpers.save_dome_view_state(context)
+        g = gp(context)
+        if g.active_collage == "":
             name, _, _, _ = vse_helpers.get_dome_animatic_frame_info()
-            closest, score = vse_helpers.find_closest_scene(name) if name else (None, 0)
-            if closest and closest != "Dome Animatic":
-                context.window.scene = bpy.data.scenes[closest]
-                vse_helpers.switch_all_view3d_to_camera(context)
+            closest, score = vse_helpers.find_closest_collage(name) if name else (None, 0)
+            if closest:
+                collection_ops.solo_collage(context, closest)
                 self.report({'INFO'}, f"Switched to '{closest}'.")
             else:
-                self.report({'WARNING'}, "No closest collage scene found.")
+                self.report({'WARNING'}, "No closest collage found.")
         else:
-            target = bpy.data.scenes.get("Dome Animatic")
-            if target:
-                context.window.scene = target
-                vse_helpers.restore_dome_view_state(context)
-                try:
-                    bpy.ops.domeanimatic.live_texture_reload()
-                except Exception:
-                    pass
-                self.report({'INFO'}, "Switched to 'Dome Animatic'.")
-            else:
-                self.report({'ERROR'}, "Dome Animatic scene not found.")
+            collection_ops.unsolo_collage(context)
+            try:
+                bpy.ops.domeanimatic.live_texture_reload()
+            except Exception:
+                pass
+            self.report({'INFO'}, "Returned to overview.")
         return {'FINISHED'}
 
 
@@ -299,7 +293,7 @@ class DOMEANIMATIC_OT_capture_from_view(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.scene.name != "Dome Animatic"
+        return gp(context).active_collage != ""
 
     def execute(self, context):
         bpy.ops.domeanimatic.render_to_live_preview()

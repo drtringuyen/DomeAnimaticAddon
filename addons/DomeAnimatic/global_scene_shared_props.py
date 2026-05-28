@@ -1,9 +1,9 @@
 """
 global_scene_shared_props.py — Centralized Blender property definitions.
 
-Two PropertyGroups replace all the old flat bpy.types.WindowManager.domeanimatic_*
-and bpy.types.Scene.domeanimatic_* registrations:
+Three PropertyGroups:
 
+  DOMEANIMATICCollageProps →  Collection.domeanimatic     (per-collage collection)
   DOMEANIMATICGlobalProps  →  WindowManager.domeanimatic  (survives scene switch)
   DOMEANIMATICSceneProps   →  Scene.domeanimatic          (per-scene data)
 
@@ -11,6 +11,17 @@ All modules access shared state through the gp() and sp() accessors.
 """
 
 import bpy
+
+
+# ── Collage PropertyGroup (Collection) ───────────────────────────────────────
+
+class DOMEANIMATICCollageProps(bpy.types.PropertyGroup):
+    """Stored on Collection — identifies and describes one collage unit."""
+
+    is_collage:      bpy.props.BoolProperty(name="Is Collage",      default=False)
+    target_object:   bpy.props.PointerProperty(name="Target Object",   type=bpy.types.Object)
+    target_material: bpy.props.PointerProperty(name="Target Material", type=bpy.types.Material)
+    target_image:    bpy.props.PointerProperty(name="Target Image",    type=bpy.types.Image)
 
 
 # ── Active cel change callback ────────────────────────────────────────────────
@@ -136,6 +147,10 @@ class DOMEANIMATICGlobalProps(bpy.types.PropertyGroup):
         name="Last Camera Zoom",
         default=3.055, min=0.01, max=1000.0,
     )
+
+    # Collage solo state — empty string means overview mode
+    active_collage:   bpy.props.StringProperty(name="Active Collage",   default="")
+    dome_camera_name: bpy.props.StringProperty(name="Dome Camera Name", default="")
     cel_folder: bpy.props.StringProperty(
         name="Cel Folder",
         description="Folder for transparent cel PNGs (relative to .blend file)",
@@ -245,18 +260,24 @@ def sp(scene=None) -> DOMEANIMATICSceneProps:
 # ── Register ──────────────────────────────────────────────────────────────────
 
 def register():
+    bpy.utils.register_class(DOMEANIMATICCollageProps)
     bpy.utils.register_class(DOMEANIMATICGlobalProps)
     bpy.utils.register_class(DOMEANIMATICSceneProps)
     bpy.types.WindowManager.domeanimatic = bpy.props.PointerProperty(
         type=DOMEANIMATICGlobalProps)
     bpy.types.Scene.domeanimatic = bpy.props.PointerProperty(
         type=DOMEANIMATICSceneProps)
+    bpy.types.Collection.domeanimatic = bpy.props.PointerProperty(
+        type=DOMEANIMATICCollageProps)
 
 
 def unregister():
+    if hasattr(bpy.types.Collection, 'domeanimatic'):
+        del bpy.types.Collection.domeanimatic
     if hasattr(bpy.types.WindowManager, 'domeanimatic'):
         del bpy.types.WindowManager.domeanimatic
     if hasattr(bpy.types.Scene, 'domeanimatic'):
         del bpy.types.Scene.domeanimatic
     bpy.utils.unregister_class(DOMEANIMATICSceneProps)
     bpy.utils.unregister_class(DOMEANIMATICGlobalProps)
+    bpy.utils.unregister_class(DOMEANIMATICCollageProps)

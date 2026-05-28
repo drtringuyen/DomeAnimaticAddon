@@ -243,6 +243,26 @@ def find_closest_scene(name: str):
     return best_scene, best_score
 
 
+def find_closest_collage(name: str):
+    if not name:
+        return None, 0
+    best, best_score = None, 0
+    for coll in bpy.data.collections:
+        try:
+            if not coll.domeanimatic.is_collage:
+                continue
+        except AttributeError:
+            continue
+        s = coll.name
+        if s == name:
+            return s, 100
+        score = 80 if (s.startswith(name) or name.startswith(s)) else 0
+        score = max(score, _longest_common_substring(name.lower(), s.lower()))
+        if score > best_score:
+            best_score, best = score, s
+    return best, best_score
+
+
 # ── Viewport helpers ──────────────────────────────────────────────────────────
 
 _dome_view_state: dict | None = None
