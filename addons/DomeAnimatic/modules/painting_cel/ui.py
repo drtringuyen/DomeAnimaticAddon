@@ -6,7 +6,7 @@ import bpy
 import os
 
 from ... import cel_store, vse_helpers
-from ...global_scene_shared_props import gp
+from ...global_scene_shared_props import gp, sp
 from . import image_io
 
 
@@ -117,29 +117,30 @@ def draw_row(layout, g, slot_id: str) -> None:
 def _draw_painting_cel(self, context):
     layout = self.layout
     g      = gp(context)
+    s      = sp(context.scene)
 
     # ── Cel folder + dome object ────────────────────────────────────────────
     folder_box = layout.box()
     row = folder_box.row(align=True)
     row.label(text="Cel Folder:", icon='FILE_FOLDER')
     try:
-        abs_folder = bpy.path.abspath(g.cel_folder)
+        abs_folder = bpy.path.abspath(s.cel_folder)
         exists = os.path.isdir(abs_folder)
     except Exception:
         exists = False
     row.label(text="", icon='CHECKMARK' if exists else 'ERROR')
 
     folder_row = folder_box.row(align=True)
-    folder_row.prop(g, "cel_folder", text="")
+    folder_row.prop(s, "cel_folder", text="")
     folder_row.operator("domeanimatic.refresh_cel_folder", text="", icon='FILE_REFRESH')
 
     dome_row = folder_box.row(align=True)
     dome_row.label(text="Dome Object:")
-    dome_row.prop(g, "dome_object", text="")
+    dome_row.prop(s, "dome_object", text="")
 
     layout.separator(factor=0.4)
 
-    mode = g.synch_mode
+    mode = s.synch_mode
 
     if mode == 'CEL_LAYERS':
         # ── Three cel rows: CEL_B (top) → CEL_A → BG (bottom) ───────────

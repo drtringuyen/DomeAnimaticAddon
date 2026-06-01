@@ -15,7 +15,7 @@ except ImportError:
     np = None
 
 from ... import cel_store, vse_helpers
-from ...global_scene_shared_props import gp
+from ...global_scene_shared_props import gp, sp
 
 
 # ── Frame / folder helpers ────────────────────────────────────────────────────
@@ -26,7 +26,7 @@ def dome_frame() -> int:
 
 
 def cel_folder_abs() -> str:
-    raw = gp().cel_folder
+    raw = sp().cel_folder
     return bpy.path.abspath(raw)
 
 

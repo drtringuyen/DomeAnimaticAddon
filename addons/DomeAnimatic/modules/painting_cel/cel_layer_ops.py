@@ -14,7 +14,7 @@ except ImportError:
     np = None
 
 from ... import cel_store, vse_helpers
-from ...global_scene_shared_props import gp
+from ...global_scene_shared_props import gp, sp
 from . import image_io
 
 
@@ -33,8 +33,8 @@ class DOMEANIMATIC_OT_refresh_cel_folder(bpy.types.Operator):
     bl_label  = "Refresh Cel Folder Path"
 
     def execute(self, context):
-        g   = gp(context)
-        raw = g.cel_folder
+        s   = sp(context.scene)
+        raw = s.cel_folder
         try:
             abs_path = bpy.path.abspath(raw)
         except Exception:
@@ -43,12 +43,12 @@ class DOMEANIMATIC_OT_refresh_cel_folder(bpy.types.Operator):
         if bpy.data.filepath:
             try:
                 rel = bpy.path.relpath(abs_path)
-                g.cel_folder = rel
+                s.cel_folder = rel
                 self.report({'INFO'}, f"Folder: {rel}")
                 return {'FINISHED'}
             except ValueError:
                 pass
-        g.cel_folder = abs_path
+        s.cel_folder = abs_path
         self.report({'INFO'}, f"Folder: {abs_path}")
         return {'FINISHED'}
 
@@ -63,12 +63,13 @@ class DOMEANIMATIC_OT_cel_set_active(bpy.types.Operator):
     slot: bpy.props.StringProperty()
 
     def execute(self, context):
-        g = gp(context)
+        g = gp(context)   # needed for active_cel and visibility props
+        s = sp(context.scene)
 
-        if g.synch_mode == 'BAKED':
+        if s.synch_mode == 'BAKED':
             return {'FINISHED'}
 
-        if g.dome_object is None:
+        if s.dome_object is None:
             bpy.ops.domeanimatic.dome_object_picker('INVOKE_DEFAULT')
             return {'FINISHED'}
 
@@ -92,8 +93,8 @@ class DOMEANIMATIC_OT_cel_set_active(bpy.types.Operator):
             with context.temp_override(window=view3d_window, area=view3d_area, region=view3d_region):
                 for obj in context.view_layer.objects:
                     obj.select_set(False)
-                g.dome_object.select_set(True)
-                context.view_layer.objects.active = g.dome_object
+                s.dome_object.select_set(True)
+                context.view_layer.objects.active = s.dome_object
                 bpy.ops.object.mode_set(mode='TEXTURE_PAINT')
 
         # Set active cel — triggers _on_active_cel_changed (Image Editor + canvas redirect)
@@ -121,13 +122,12 @@ class DOMEANIMATIC_OT_dome_object_picker(bpy.types.Operator):
     _candidates: list = []
 
     def invoke(self, context, event):
-        g          = gp(context)
         dome_scene = bpy.data.scenes.get("Dome Animatic")
         if dome_scene is None:
             self.report({'ERROR'}, "Dome Animatic scene not found.")
             return {'CANCELLED'}
 
-        mat        = g.target_material
+        mat        = sp(context.scene).target_material
         candidates = []
         for obj in dome_scene.objects:
             if obj.type != 'MESH':
@@ -145,7 +145,7 @@ class DOMEANIMATIC_OT_dome_object_picker(bpy.types.Operator):
             return {'CANCELLED'}
 
         if len(candidates) == 1:
-            g.dome_object = candidates[0]
+            sp(context.scene).dome_object = candidates[0]
             return {'FINISHED'}
 
         return context.window_manager.invoke_props_dialog(self, width=300)
@@ -157,7 +157,7 @@ class DOMEANIMATIC_OT_dome_object_picker(bpy.types.Operator):
         if self.dome_object is None:
             self.report({'WARNING'}, "No object selected.")
             return {'CANCELLED'}
-        gp(context).dome_object = self.dome_object
+        sp(context.scene).dome_object = self.dome_object
         return {'FINISHED'}
 
 

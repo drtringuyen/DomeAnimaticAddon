@@ -4,10 +4,16 @@ global_scene_shared_props.py — Centralized Blender property definitions.
 Three PropertyGroups:
 
   DOMEANIMATICCollageProps →  Collection.domeanimatic     (per-collage collection)
-  DOMEANIMATICGlobalProps  →  WindowManager.domeanimatic  (survives scene switch)
-  DOMEANIMATICSceneProps   →  Scene.domeanimatic          (per-scene data)
+  DOMEANIMATICGlobalProps  →  WindowManager.domeanimatic  (UI-only, NOT saved)
+  DOMEANIMATICSceneProps   →  Scene.domeanimatic          (per-scene data, saved in .blend)
 
 All modules access shared state through the gp() and sp() accessors.
+
+Properties that must survive file reopen live on Scene (sp()):
+  target_material, synch_mode, tex_width/height/scale, cel_folder, *_mat_image.
+
+Properties that are fine resetting on restart live on WindowManager (gp()):
+  active_cel, dome_object, mat_nodes_expanded, visibility/opacity, etc.
 """
 
 import bpy
@@ -44,9 +50,12 @@ def _on_active_cel_changed(self, context):
                     if space.type == 'IMAGE_EDITOR':
                         space.image = img
                         area.tag_redraw()
-    if self.synch_mode != 'CEL_LAYERS':
+    # synch_mode and target_material are now on Scene props
+    scene      = (context.scene if context else None) or bpy.context.scene
+    scene_prop = scene.domeanimatic
+    if scene_prop.synch_mode != 'CEL_LAYERS':
         return
-    mat = self.target_material
+    mat = scene_prop.target_material
     if mat is not None and mat.use_nodes:
         for node in mat.node_tree.nodes:
             if node.type == 'TEX_IMAGE' and node.image == img:
@@ -64,7 +73,8 @@ def _on_active_cel_changed(self, context):
 
 def _on_synch_mode_changed(self, context):
     """Redirect Image Editors (and 3D paint canvas in CEL_LAYERS) when the
-    sync mode is switched from the Live Texture panel."""
+    sync mode is switched from the Live Texture panel.
+    self = DOMEANIMATICSceneProps; active_cel lives on WindowManager."""
     from . import cel_store
     if self.synch_mode == 'BAKED':
         live_img = cel_store.get_live_image()
@@ -78,7 +88,9 @@ def _on_synch_mode_changed(self, context):
                             space.image = live_img
                             area.tag_redraw()
     elif self.synch_mode == 'CEL_LAYERS':
-        layer = cel_store.BY_SLOT.get(self.active_cel)
+        # active_cel is still on WindowManager (UI state)
+        active_cel = bpy.data.window_managers[0].domeanimatic.active_cel
+        layer      = cel_store.BY_SLOT.get(active_cel)
         if layer is None:
             return
         img = bpy.data.images.get(layer.datablock_name)
@@ -117,31 +129,12 @@ def _on_camera_zoom_changed(self, context):
 # ── Global PropertyGroup (WindowManager) ──────────────────────────────────────
 
 class DOMEANIMATICGlobalProps(bpy.types.PropertyGroup):
-    """Stored on WindowManager — persists across scene switches."""
+    """Stored on WindowManager — UI state only, NOT saved in .blend.
+    Reset to defaults on every file open; that is intentional."""
 
     show_labels: bpy.props.BoolProperty(
         name="Show Development Infos",
         default=False,
-    )
-    target_material: bpy.props.PointerProperty(
-        name="Dome Animatic Material",
-        description="The single Dome Animatic material shared across all scenes",
-        type=bpy.types.Material,
-    )
-    dome_object: bpy.props.PointerProperty(
-        name="Dome Object",
-        description="The mesh object to enter Texture Paint on when activating a cel slot",
-        type=bpy.types.Object,
-    )
-    synch_mode: bpy.props.EnumProperty(
-        name="Sync Mode",
-        items=[
-            ('BAKED',      "Synch to Baked",      "Channel 1 only -> LiveDomePreview"),
-            ('CEL_LAYERS', "Synch to Cel-layers",  "Channels 2/3/4 -> BG/Cel_A/Cel_B"),
-            ('OFF',        "Off",                  "No sync"),
-        ],
-        default='OFF',
-        update=_on_synch_mode_changed,
     )
     last_camera_zoom: bpy.props.FloatProperty(
         name="Last Camera Zoom",
@@ -151,12 +144,7 @@ class DOMEANIMATICGlobalProps(bpy.types.PropertyGroup):
     # Collage solo state — empty string means overview mode
     active_collage:   bpy.props.StringProperty(name="Active Collage",   default="")
     dome_camera_name: bpy.props.StringProperty(name="Dome Camera Name", default="")
-    cel_folder: bpy.props.StringProperty(
-        name="Cel Folder",
-        description="Folder for transparent cel PNGs (relative to .blend file)",
-        default="//transparent-cels-paintings",
-        subtype='DIR_PATH',
-    )
+
     active_cel: bpy.props.EnumProperty(
         name="Active Cel",
         description="Which cel slot is active in the Image Editor for painting",
@@ -173,48 +161,72 @@ class DOMEANIMATICGlobalProps(bpy.types.PropertyGroup):
         default=False,
     )
 
-    # Texture resolution settings (used by live_texture_prepare operator)
-    tex_width: bpy.props.IntProperty(
-        name="Width",  default=960,  min=1, max=7680,
-    )
-    tex_height: bpy.props.IntProperty(
-        name="Height", default=590,  min=1, max=4320,
-    )
-    tex_scale: bpy.props.FloatProperty(
-        name="Scale",  default=1.0,  min=0.0, max=2.0, step=10, precision=2,
-    )
+    # Per-slot visibility/opacity/filepath — pure UI state, OK to reset on reload
+    bg_visible:  bpy.props.BoolProperty(name="BG Visible",   default=True)
+    bg_opacity:  bpy.props.FloatProperty(name="BG Opacity",  default=1.0, min=0.0, max=1.0, subtype='FACTOR')
+    bg_filepath: bpy.props.StringProperty(name="BG Filepath", default="", subtype='FILE_PATH')
 
-    # Per-slot: BG
-    bg_visible:   bpy.props.BoolProperty(name="BG Visible",   default=True)
-    bg_opacity:   bpy.props.FloatProperty(name="BG Opacity",  default=1.0, min=0.0, max=1.0, subtype='FACTOR')
-    bg_filepath:  bpy.props.StringProperty(name="BG Filepath", default="", subtype='FILE_PATH')
-    bg_mat_image: bpy.props.PointerProperty(name="BG Material Image", type=bpy.types.Image)
+    cel_a_visible:  bpy.props.BoolProperty(name="Cel A Visible",   default=True)
+    cel_a_opacity:  bpy.props.FloatProperty(name="Cel A Opacity",  default=1.0, min=0.0, max=1.0, subtype='FACTOR')
+    cel_a_filepath: bpy.props.StringProperty(name="Cel A Filepath", default="", subtype='FILE_PATH')
 
-    # Per-slot: CEL_A
-    cel_a_visible:   bpy.props.BoolProperty(name="Cel A Visible",   default=True)
-    cel_a_opacity:   bpy.props.FloatProperty(name="Cel A Opacity",  default=1.0, min=0.0, max=1.0, subtype='FACTOR')
-    cel_a_filepath:  bpy.props.StringProperty(name="Cel A Filepath", default="", subtype='FILE_PATH')
-    cel_a_mat_image: bpy.props.PointerProperty(name="Cel A Material Image", type=bpy.types.Image)
-
-    # Per-slot: CEL_B
-    cel_b_visible:   bpy.props.BoolProperty(name="Cel B Visible",   default=True)
-    cel_b_opacity:   bpy.props.FloatProperty(name="Cel B Opacity",  default=1.0, min=0.0, max=1.0, subtype='FACTOR')
-    cel_b_filepath:  bpy.props.StringProperty(name="Cel B Filepath", default="", subtype='FILE_PATH')
-    cel_b_mat_image: bpy.props.PointerProperty(name="Cel B Material Image", type=bpy.types.Image)
+    cel_b_visible:  bpy.props.BoolProperty(name="Cel B Visible",   default=True)
+    cel_b_opacity:  bpy.props.FloatProperty(name="Cel B Opacity",  default=1.0, min=0.0, max=1.0, subtype='FACTOR')
+    cel_b_filepath: bpy.props.StringProperty(name="Cel B Filepath", default="", subtype='FILE_PATH')
 
 
 # ── Scene PropertyGroup ───────────────────────────────────────────────────────
 
 class DOMEANIMATICSceneProps(bpy.types.PropertyGroup):
-    """Stored on Scene — per-scene data."""
+    """Stored on Scene — per-scene data, saved in .blend."""
 
     synch_active:          bpy.props.BoolProperty(name="Synch Active", default=False)
     collage_expanded:      bpy.props.BoolProperty(name="Collage Expanded", default=False)
     manual_scene_expanded: bpy.props.BoolProperty(name="Scene List Expanded", default=False)
 
     target_object:   bpy.props.PointerProperty(name="Target Object",   type=bpy.types.Object)
-    target_material: bpy.props.PointerProperty(name="Target Material", type=bpy.types.Material)
     target_image:    bpy.props.PointerProperty(name="Target Image",    type=bpy.types.Image)
+
+    # ── Moved from WindowManager so they survive file reopen ──────────────────
+    dome_object: bpy.props.PointerProperty(
+        name="Dome Object",
+        description="The mesh object to enter Texture Paint on when activating a cel slot",
+        type=bpy.types.Object,
+    )
+    target_material: bpy.props.PointerProperty(
+        name="Dome Animatic Material",
+        description="The single Dome Animatic material used by this scene",
+        type=bpy.types.Material,
+    )
+    synch_mode: bpy.props.EnumProperty(
+        name="Sync Mode",
+        items=[
+            ('BAKED',      "Synch to Baked",     "Channel 1 only -> LiveDomePreview"),
+            ('CEL_LAYERS', "Synch to Cel-layers", "Channels 2/3/4 -> BG/Cel_A/Cel_B"),
+            ('OFF',        "Off",                 "No sync"),
+        ],
+        default='OFF',
+        update=_on_synch_mode_changed,
+    )
+    cel_folder: bpy.props.StringProperty(
+        name="Cel Folder",
+        description="Folder for transparent cel PNGs (relative to .blend file)",
+        default="//transparent-cels-paintings",
+        subtype='DIR_PATH',
+    )
+    tex_width: bpy.props.IntProperty(
+        name="Width",  default=960, min=1, max=7680,
+    )
+    tex_height: bpy.props.IntProperty(
+        name="Height", default=590, min=1, max=4320,
+    )
+    tex_scale: bpy.props.FloatProperty(
+        name="Scale",  default=1.0, min=0.0, max=2.0, step=10, precision=2,
+    )
+    # Node image pointers — survive file reopen as long as the Image datablock exists
+    bg_mat_image:    bpy.props.PointerProperty(name="BG Material Image",    type=bpy.types.Image)
+    cel_a_mat_image: bpy.props.PointerProperty(name="Cel A Material Image", type=bpy.types.Image)
+    cel_b_mat_image: bpy.props.PointerProperty(name="Cel B Material Image", type=bpy.types.Image)
 
     # Collage camera zoom (persisted per-scene; carried over by last_camera_zoom)
     camera_zoom: bpy.props.FloatProperty(

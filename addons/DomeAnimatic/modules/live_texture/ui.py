@@ -36,8 +36,9 @@ def _draw_link_status(box):
 # ── Shared draw function ──────────────────────────────────────────────────────
 
 def _draw_live_texture(self, context):
-    layout = self.layout
-    g      = gp(context)
+    layout  = self.layout
+    g       = gp(context)
+    s       = sp(context.scene)
     verbose = g.show_labels
 
     # ── Prepare / Reload row ───────────────────────────────────────────────
@@ -55,14 +56,13 @@ def _draw_live_texture(self, context):
         prepare_box.separator(factor=0.3)
 
     row = prepare_box.row(align=True)
-    row.prop(g, "tex_width")
-    row.prop(g, "tex_height")
-    prepare_box.prop(g, "tex_scale", slider=True)
+    row.prop(s, "tex_width")
+    row.prop(s, "tex_height")
+    prepare_box.prop(s, "tex_scale", slider=True)
 
     if verbose:
-        import math
-        final_w = max(1, int(g.tex_width  * g.tex_scale))
-        final_h = max(1, int(g.tex_height * g.tex_scale))
+        final_w = max(1, int(s.tex_width  * s.tex_scale))
+        final_h = max(1, int(s.tex_height * s.tex_scale))
         col = prepare_box.column()
         col.enabled = False
         col.label(text=f"Final: {final_w}x{final_h}", icon='FIXED_SIZE')
@@ -105,7 +105,7 @@ def _draw_live_texture(self, context):
     label_row.alignment = 'CENTER'
     label_row.label(text="Synch VSE as:", icon='SEQ_SPLITVIEW')
 
-    cur_mode = g.synch_mode
+    cur_mode = s.synch_mode
     mode_row = synch_box.row(align=True)
     mode_row.scale_y = 1.4
 
@@ -141,13 +141,13 @@ def _draw_live_texture(self, context):
 
     if g.mat_nodes_expanded:
         col = mat_box.column(align=True)
-        col.prop(g, "target_material", text="")
+        col.prop(s, "target_material", text="")
         col.separator(factor=0.3)
         col.label(text="Material Tex Node Images:", icon='NODE_TEXTURE')
         for slot, label in (("bg", "BG  "), ("cel_a", "Cel A"), ("cel_b", "Cel B")):
             row = col.row(align=True)
             row.label(text=label)
-            row.prop(g, f"{slot}_mat_image", text="")
+            row.prop(s, f"{slot}_mat_image", text="")
         col.separator(factor=0.3)
         col.operator("domeanimatic.link_cel_nodes",
                      text="Link Cel Nodes to Material", icon='LINKED')

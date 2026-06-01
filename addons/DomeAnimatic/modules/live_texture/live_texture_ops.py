@@ -32,7 +32,7 @@ def _find_live_texture_node(mat):
 def get_link_status() -> dict:
     """Return status dict for display in the panel."""
     live_img = cel_store.get_live_image()
-    mat      = gp().target_material
+    mat      = sp().target_material
     tex_node = _find_live_texture_node(mat) if mat else None
 
     node_image_name = None
@@ -59,7 +59,7 @@ def _relink_live_texture_to_material():
     if live_img is None:
         return False, "LiveDomePreview not found."
 
-    mat = gp().target_material
+    mat = sp().target_material
     if mat is None:
         return False, "No target material set."
     if not mat.use_nodes:
@@ -90,8 +90,9 @@ class DOMEANIMATIC_OT_live_texture_prepare(bpy.types.Operator):
 
     def execute(self, context):
         g      = gp(context)
-        width  = max(1, int(g.tex_width  * g.tex_scale))
-        height = max(1, int(g.tex_height * g.tex_scale))
+        s      = sp(context.scene)
+        width  = max(1, int(s.tex_width  * s.tex_scale))
+        height = max(1, int(s.tex_height * s.tex_scale))
 
         name = cel_store.BAKED_LAYER.datablock_name
         if name in bpy.data.images:
@@ -110,16 +111,16 @@ class DOMEANIMATIC_OT_live_texture_prepare(bpy.types.Operator):
             self.report({'INFO'}, f"'{name}' created at {width}x{height}.")
             vse_helpers.log(f"[LiveTexture] Created {name} at {width}x{height}")
 
-        self._try_autolink(g)
+        self._try_autolink(s)
         return {'FINISHED'}
 
-    def _try_autolink(self, g):
-        mat = g.target_material
+    def _try_autolink(self, s):
+        mat = s.target_material
         if mat is None:
             for candidate in ("Dome_Animatic", "Dome Animatic", "DomeAnimatic"):
                 mat = bpy.data.materials.get(candidate)
                 if mat:
-                    g.target_material = mat
+                    s.target_material = mat
                     vse_helpers.log(f"[LiveTexture] Auto-found material: '{mat.name}'")
                     break
         if mat is None or not mat.use_nodes:
@@ -143,7 +144,7 @@ class DOMEANIMATIC_OT_live_texture_prepare(bpy.types.Operator):
             if node and node.type == 'TEX_IMAGE':
                 cel_img = cel_store.get_or_create_cel_image(slot_id)
                 node.image = cel_img
-                setattr(g, f"{prop_prefix}_mat_image", cel_img)
+                setattr(s, f"{prop_prefix}_mat_image", cel_img)
                 vse_helpers.log(f"[LiveTexture] Linked '{node_name}' → '{cel_img.name}'")
 
 
@@ -173,11 +174,11 @@ class DOMEANIMATIC_OT_set_synch_mode(bpy.types.Operator):
     mode: bpy.props.StringProperty()  # 'BAKED' | 'CEL_LAYERS' | 'OFF'
 
     def execute(self, context):
-        g = gp(context)
-        g.synch_mode = self.mode
+        s = sp(context.scene)
+        s.synch_mode = self.mode
 
         socket = 'Cels' if self.mode == 'CEL_LAYERS' else 'Baked'
-        _set_menu_switch(g, socket)
+        _set_menu_switch(s, socket)
         vse_sync._apply_track_muting_by_mode(self.mode)
         return {'FINISHED'}
 
@@ -195,13 +196,13 @@ class DOMEANIMATIC_OT_live_texture_start_synch(bpy.types.Operator):
 
         vse_sync.start_live_sync()
         vse_sync.live_texture_sync_handler(dome_scene)
-        sp().synch_active = True
+        s = sp(context.scene)
+        s.synch_active = True
 
-        g = gp(context)
-        socket = 'Cels' if g.synch_mode == 'CEL_LAYERS' else 'Baked'
-        _set_menu_switch(g, socket)
+        socket = 'Cels' if s.synch_mode == 'CEL_LAYERS' else 'Baked'
+        _set_menu_switch(s, socket)
 
-        self.report({'INFO'}, f"VSE sync started — mode: {g.synch_mode}")
+        self.report({'INFO'}, f"VSE sync started — mode: {s.synch_mode}")
         return {'FINISHED'}
 
 
@@ -212,10 +213,10 @@ class DOMEANIMATIC_OT_live_texture_stop_synch(bpy.types.Operator):
 
     def execute(self, context):
         vse_sync.stop_live_sync()
-        sp().synch_active  = False
-        g = gp(context)
-        g.synch_mode = 'OFF'
-        _set_menu_switch(g, 'Baked')
+        s = sp(context.scene)
+        s.synch_active = False
+        s.synch_mode   = 'OFF'
+        _set_menu_switch(s, 'Baked')
         self.report({'INFO'}, "VSE sync stopped.")
         return {'FINISHED'}
 
@@ -229,8 +230,8 @@ class DOMEANIMATIC_OT_link_cel_nodes(bpy.types.Operator):
     )
 
     def execute(self, context):
-        g   = gp(context)
-        mat = g.target_material
+        s   = sp(context.scene)
+        mat = s.target_material
         if mat is None:
             self.report({'ERROR'}, "No target material set.")
             return {'CANCELLED'}
@@ -259,7 +260,7 @@ class DOMEANIMATIC_OT_link_cel_nodes(bpy.types.Operator):
             if node and node.type == 'TEX_IMAGE':
                 cel_img    = cel_store.get_or_create_cel_image(slot_id)
                 node.image = cel_img
-                setattr(g, f"{prop_prefix}_mat_image", cel_img)
+                setattr(s, f"{prop_prefix}_mat_image", cel_img)
                 linked.append(node.name)
                 vse_helpers.log(f"[LinkCelNodes] '{node.name}' → '{cel_img.name}'")
             else:
@@ -274,7 +275,7 @@ class DOMEANIMATIC_OT_link_cel_nodes(bpy.types.Operator):
             if node and node.type == 'TEX_IMAGE':
                 cel_img    = cel_store.get_or_create_cel_image(slot_id)
                 node.image = cel_img
-                setattr(g, f"{prop_prefix}_mat_image", cel_img)
+                setattr(s, f"{prop_prefix}_mat_image", cel_img)
                 linked.append(node.name)
                 linked_slots.add(slot_id)
                 missing = [m for m in missing if NAMED.get(m, ('', ''))[0] != slot_id]
@@ -293,7 +294,7 @@ class DOMEANIMATIC_OT_debug_node_sockets(bpy.types.Operator):
     bl_description = "Print material node tree to console"
 
     def execute(self, context):
-        mat = gp(context).target_material
+        mat = sp(context.scene).target_material
         if mat is None or not mat.use_nodes:
             self.report({'ERROR'}, "No material set or no node tree.")
             return {'CANCELLED'}
@@ -313,29 +314,29 @@ class DOMEANIMATIC_OT_debug_node_sockets(bpy.types.Operator):
 
 # ── Internal helper ────────────────────────────────────────────────────────────
 
-def _resolve_target_material(g):
-    """Return target_material, auto-detecting and storing it when unset."""
-    mat = g.target_material
+def _resolve_target_material(s):
+    """Return target_material from scene props, auto-detecting and storing it when unset."""
+    mat = s.target_material
     if mat is not None:
         return mat
     # try common names
     for name in ("Dome_Animatic", "Dome Animatic", "DomeAnimatic"):
         mat = bpy.data.materials.get(name)
         if mat:
-            g.target_material = mat
+            s.target_material = mat
             vse_helpers.log(f"[LiveTexture] Auto-detected material: '{mat.name}'")
             return mat
     # fall back: find any material with a Menu Switch node
     for mat in bpy.data.materials:
         if mat.use_nodes and mat.node_tree.nodes.get("Menu Switch"):
-            g.target_material = mat
+            s.target_material = mat
             vse_helpers.log(f"[LiveTexture] Auto-detected material via Menu Switch: '{mat.name}'")
             return mat
     return None
 
 
-def _set_menu_switch(g, socket_name: str) -> None:
-    mat = _resolve_target_material(g)
+def _set_menu_switch(s, socket_name: str) -> None:
+    mat = _resolve_target_material(s)
     if mat is None or not mat.use_nodes:
         return
     node = mat.node_tree.nodes.get("Menu Switch")

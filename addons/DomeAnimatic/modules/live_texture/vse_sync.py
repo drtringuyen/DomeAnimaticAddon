@@ -13,7 +13,7 @@ import bpy
 import os
 from bpy.app.handlers import persistent
 from ... import cel_store, vse_helpers
-from ...global_scene_shared_props import gp
+from ...global_scene_shared_props import gp, sp
 
 
 # ── Handler state ─────────────────────────────────────────────────────────────
@@ -78,7 +78,8 @@ def live_texture_sync_handler(scene, depsgraph=None):
     if dome_scene is None:
         return
 
-    mode = gp().synch_mode
+    # synch_mode is on Scene props (saved in .blend) — read from dome_scene
+    mode = dome_scene.domeanimatic.synch_mode
     if mode == 'OFF':
         return
 
@@ -132,6 +133,43 @@ def scene_switch_handler(scene, depsgraph=None):
         vse_helpers.log(f"[LiveTexture] scene_switch_handler error: {e}")
 
 
+# ── Load-post restore ────────────────────────────────────────────────────────
+
+@persistent
+def load_post_handler(filepath):
+    """After file open: re-register the frame handler if synch was active,
+    and re-derive cel node image links from the material node tree."""
+    dome_scene = bpy.data.scenes.get("Dome Animatic")
+    if dome_scene is None:
+        return
+    scene_props = dome_scene.domeanimatic
+    _s.last_path = {1: "", 2: "", 3: "", 4: ""}
+
+    if scene_props.synch_active:
+        _register_frame_handler()
+        vse_helpers.log("[LiveTexture] load_post: re-registered frame handler (synch was active)")
+
+    # Re-derive *_mat_image pointers from the material node tree so they
+    # don't stay None when the scene is reopened.
+    mat = scene_props.target_material
+    if mat is None or not mat.use_nodes:
+        return
+    SLOT_MAP = {
+        'BG':    ('bg',    ['BG',    'Image Texture.001']),
+        'CEL_A': ('cel_a', ['Cel_A', 'Image Texture.002']),
+        'CEL_B': ('cel_b', ['Cel_B', 'Image Texture.003']),
+    }
+    for slot_id, (prop_prefix, node_names) in SLOT_MAP.items():
+        if getattr(scene_props, f"{prop_prefix}_mat_image") is not None:
+            continue  # already set
+        for node_name in node_names:
+            node = mat.node_tree.nodes.get(node_name)
+            if node and node.type == 'TEX_IMAGE' and node.image:
+                setattr(scene_props, f"{prop_prefix}_mat_image", node.image)
+                vse_helpers.log(f"[LiveTexture] load_post: restored {prop_prefix}_mat_image → '{node.image.name}'")
+                break
+
+
 # ── Handler registration helpers ──────────────────────────────────────────────
 
 def _unregister_frame_handler() -> None:
@@ -181,9 +219,13 @@ def get_strip_on_channel(scene, channel: int, frame: int):
 def register() -> None:
     if scene_switch_handler not in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.append(scene_switch_handler)
+    if load_post_handler not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(load_post_handler)
 
 
 def unregister() -> None:
     stop_live_sync()
     if scene_switch_handler in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(scene_switch_handler)
+    if load_post_handler in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(load_post_handler)
