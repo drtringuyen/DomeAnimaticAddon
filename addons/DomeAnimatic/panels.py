@@ -17,7 +17,7 @@ avoided — Blender 5.x cannot resolve inherited draw callbacks on subclasses.
 
 import bpy
 from . import module_manager
-from .global_scene_shared_props import gp
+from .global_scene_shared_props import gp, sp
 
 
 # ── Shared draw functions ─────────────────────────────────────────────────────
@@ -26,19 +26,24 @@ def _draw_infos(self, context):
     layout = self.layout
     g      = gp(context)
 
-    row1 = layout.row(align=True)
-    row1.operator("domeanimatic.build_info", icon='TIME')
-    row1.operator("domeanimatic.reload_addon", text="", icon='FILE_REFRESH')
-
-    row2 = layout.row(align=True)
-    row2.prop(g, "show_labels", text="Debug", toggle=True, icon='SCRIPT')
-    row2.operator("domeanimatic.toggle_console", text="", icon='CONSOLE')
-    row2.operator("domeanimatic.clear_console",  text="", icon='TRASH')
+    # Single compact row matching the minimal look
+    row = layout.row(align=True)
+    row.operator("domeanimatic.build_info", icon='DESKTOP', text="")
+    row.operator("domeanimatic.build_info")
+    row.operator("domeanimatic.reload_addon",  text="", icon='FILE_REFRESH')
+    row.prop(g, "show_labels", text="", toggle=True, icon='INFO')
+    row.operator("domeanimatic.clear_console", text="", icon='TRASH')
 
     if not g.show_labels:
         return
 
     layout.separator(factor=0.3)
+
+    # Debug row: console + module toggles
+    row2 = layout.row(align=True)
+    row2.operator("domeanimatic.toggle_console", text="Console", icon='CONSOLE')
+
+    layout.separator(factor=0.2)
 
     row3 = layout.row(align=True)
     row3.label(text="Modules:")
@@ -51,7 +56,7 @@ def _draw_infos(self, context):
     layout.separator(factor=0.3)
 
     col = layout.column(align=True)
-    col.prop(g, "target_material", text="")
+    col.prop(sp(context.scene), "target_material", text="")
     try:
         col.operator("domeanimatic.debug_node_sockets", text="", icon='INFO')
     except Exception:

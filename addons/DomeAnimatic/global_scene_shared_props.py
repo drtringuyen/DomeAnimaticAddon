@@ -73,10 +73,13 @@ def _on_active_cel_changed(self, context):
 
 def _on_synch_mode_changed(self, context):
     """Redirect Image Editors (and 3D paint canvas in CEL_LAYERS) when the
-    sync mode is switched from the Live Texture panel.
+    sync mode is switched.  Also applies VSE track muting and material Menu
+    Switch so prop_enum in any panel has the same effect as the operator.
     self = DOMEANIMATICSceneProps; active_cel lives on WindowManager."""
     from . import cel_store
-    if self.synch_mode == 'BAKED':
+    mode = self.synch_mode
+
+    if mode == 'BAKED':
         live_img = cel_store.get_live_image()
         if live_img is None:
             return
@@ -87,7 +90,7 @@ def _on_synch_mode_changed(self, context):
                         if space.type == 'IMAGE_EDITOR':
                             space.image = live_img
                             area.tag_redraw()
-    elif self.synch_mode == 'CEL_LAYERS':
+    elif mode == 'CEL_LAYERS':
         # active_cel is still on WindowManager (UI state)
         active_cel = bpy.data.window_managers[0].domeanimatic.active_cel
         layer      = cel_store.BY_SLOT.get(active_cel)
@@ -115,6 +118,19 @@ def _on_synch_mode_changed(self, context):
                 dome_scene.tool_settings.image_paint.canvas = img
             except Exception:
                 pass
+
+    # Apply VSE track muting + material Menu Switch (lazy import avoids circular deps)
+    try:
+        from .modules.live_texture import vse_sync as _vse_sync
+        _vse_sync._apply_track_muting_by_mode(mode)
+    except Exception:
+        pass
+    try:
+        from .modules.live_texture.live_texture_ops import _set_menu_switch
+        socket = 'Cels' if mode == 'CEL_LAYERS' else 'Baked'
+        _set_menu_switch(self, socket)
+    except Exception:
+        pass
 
 
 # ── Camera zoom callback (used by collage_collection module) ──────────────────
@@ -159,6 +175,10 @@ class DOMEANIMATICGlobalProps(bpy.types.PropertyGroup):
     mat_nodes_expanded: bpy.props.BoolProperty(
         name="Material Nodes Expanded",
         default=False,
+    )
+    synch_expanded: bpy.props.BoolProperty(
+        name="Synch Section Expanded",
+        default=True,
     )
 
     # Per-slot visibility/opacity/filepath — pure UI state, OK to reset on reload

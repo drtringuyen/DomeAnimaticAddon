@@ -79,55 +79,52 @@ def _draw_live_texture(self, context):
     if verbose:
         _draw_link_status(prepare_box)
 
-    # ── Synch VSE row ──────────────────────────────────────────────────────
-    synch_box = layout.box()
-    is_active = sp().synch_active
+    # ── Synch VSE — collapsible ────────────────────────────────────────────
+    synch_box   = layout.box()
+    is_active   = s.synch_active
+    is_expanded = g.synch_expanded
 
-    if verbose:
-        col = synch_box.column(align=True)
-        col.enabled = False
-        col.label(
-            text="Live sync active" if is_active else "Live sync inactive",
-            icon='RADIOBUT_ON' if is_active else 'RADIOBUT_OFF',
-        )
-        dome_scene = bpy.data.scenes.get("Dome Animatic")
-        if dome_scene and dome_scene.sequence_editor:
-            frame = dome_scene.frame_current
-            for ch, label in ((1, "Baked"), (2, "BG"), (3, "Cel_A"), (4, "Cel_B")):
-                s = vse_helpers.vse_get_strip_on_channel(dome_scene, ch, frame)
-                col.label(
-                    text=f"Ch{ch} ({label}): {s.name}" if s else f"Ch{ch} ({label}): empty",
-                    icon='STRIP_COLOR_01' if s else 'INFO',
-                )
-        synch_box.separator(factor=0.3)
+    synch_header = synch_box.row(align=True)
+    synch_header.prop(
+        g, "synch_expanded",
+        icon='TRIA_DOWN' if is_expanded else 'TRIA_RIGHT',
+        icon_only=True, emboss=False,
+    )
+    synch_header.label(text="Synch VSE as:", icon='SEQ_SPLITVIEW')
 
-    label_row = synch_box.row()
-    label_row.alignment = 'CENTER'
-    label_row.label(text="Synch VSE as:", icon='SEQ_SPLITVIEW')
+    if is_expanded:
+        if verbose:
+            debug_col = synch_box.column(align=True)
+            debug_col.enabled = False
+            debug_col.label(
+                text="Live sync active" if is_active else "Live sync inactive",
+                icon='RADIOBUT_ON' if is_active else 'RADIOBUT_OFF',
+            )
+            dome_scene_dbg = bpy.data.scenes.get("Dome Animatic")
+            if dome_scene_dbg and dome_scene_dbg.sequence_editor:
+                frame_dbg = dome_scene_dbg.frame_current
+                for ch, ch_label in ((1, "Baked"), (2, "BG"), (3, "Cel_A"), (4, "Cel_B")):
+                    strip = vse_helpers.vse_get_strip_on_channel(dome_scene_dbg, ch, frame_dbg)
+                    debug_col.label(
+                        text=f"Ch{ch} ({ch_label}): {strip.name}" if strip else f"Ch{ch} ({ch_label}): empty",
+                        icon='STRIP_COLOR_01' if strip else 'INFO',
+                    )
 
-    cur_mode = s.synch_mode
-    mode_row = synch_box.row(align=True)
-    mode_row.scale_y = 1.4
-
-    op = mode_row.operator("domeanimatic.set_synch_mode",
-                           text="Baked Frame", icon='OUTLINER_OB_IMAGE',
-                           depress=(cur_mode == 'BAKED'))
-    op.mode = 'BAKED'
-
-    op = mode_row.operator("domeanimatic.set_synch_mode",
-                           text="Unbaked Cels", icon='RENDERLAYERS',
-                           depress=(cur_mode == 'CEL_LAYERS'))
-    op.mode = 'CEL_LAYERS'
-
-    if not is_active:
-        mode_row.operator("domeanimatic.live_texture_start_synch",
-                          text="", icon='PLAY')
-    else:
-        mode_row.operator("domeanimatic.live_texture_stop_synch",
-                          text="", icon='SNAP_FACE')
-
-    mode_row.operator("domeanimatic.live_texture_start_synch",
-                      text="", icon='FILE_REFRESH')
+        # All controls in one row: [Baked Frame][Unbaked Cels][start/stop][refresh]
+        ctrl_row = synch_box.row(align=True)
+        ctrl_row.scale_y = 1.4
+        ctrl_row.prop_enum(s, "synch_mode", 'BAKED',
+                           text="Baked Frame", icon='OUTLINER_OB_IMAGE')
+        ctrl_row.prop_enum(s, "synch_mode", 'CEL_LAYERS',
+                           text="Unbaked Cels", icon='RENDERLAYERS')
+        if not is_active:
+            ctrl_row.operator("domeanimatic.live_texture_start_synch",
+                              text="", icon='PLAY')
+        else:
+            ctrl_row.operator("domeanimatic.live_texture_stop_synch",
+                              text="", icon='SNAP_FACE')
+        ctrl_row.operator("domeanimatic.live_texture_start_synch",
+                          text="", icon='FILE_REFRESH')
 
     # ── Material nodes — collapsible ───────────────────────────────────────
     mat_box    = layout.box()
@@ -141,7 +138,9 @@ def _draw_live_texture(self, context):
 
     if g.mat_nodes_expanded:
         col = mat_box.column(align=True)
-        col.prop(s, "target_material", text="")
+        mat_row = col.row(align=True)
+        mat_row.prop(s, "target_material", text="")
+        mat_row.prop(s, "dome_object", text="", icon='MESH_DATA')
         col.separator(factor=0.3)
         col.label(text="Material Tex Node Images:", icon='NODE_TEXTURE')
         for slot, label in (("bg", "BG  "), ("cel_a", "Cel A"), ("cel_b", "Cel B")):

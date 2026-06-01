@@ -134,37 +134,45 @@ def _draw_painting_cel(self, context):
     folder_row.prop(s, "cel_folder", text="")
     folder_row.operator("domeanimatic.refresh_cel_folder", text="", icon='FILE_REFRESH')
 
-    dome_row = folder_box.row(align=True)
-    dome_row.label(text="Dome Object:")
-    dome_row.prop(s, "dome_object", text="")
-
     layout.separator(factor=0.4)
 
     mode = s.synch_mode
 
-    if mode == 'CEL_LAYERS':
-        # ── Three cel rows: CEL_B (top) → CEL_A → BG (bottom) ───────────
-        col = layout.column(align=False)
-        for slot_id in reversed([layer.slot_id for layer in cel_store.DRAW_ORDER]):
-            draw_row(col, g, slot_id)
-            col.separator(factor=0.2)
+    if mode in ('CEL_LAYERS', 'BAKED'):
+        # ── Single box: tab selector + content + purge ────────────────────────
+        cel_box = layout.box()
 
-        # ── Purge unused ─────────────────────────────────────────────────
-        layout.separator(factor=0.3)
-        unused_count = _count_unused_cel_files()
-        purge_row    = layout.row()
-        purge_row.enabled = unused_count > 0
-        purge_row.operator(
-            "domeanimatic.cel_purge_unused",
-            text=f"Purge Unused ({unused_count})",
-            icon='TRASH',
-        )
+        # Tab-style selector — prop_enum shows grey for active, dark for inactive
+        # (no blue depress). Rounded-top / flat-bottom comes from being at the
+        # very top of a box with align=True.
+        tab_row = cel_box.row(align=True)
+        tab_row.scale_y = 1.3
+        tab_row.prop_enum(s, "synch_mode", 'BAKED',
+                          text="Baked Frame", icon='OUTLINER_OB_IMAGE')
+        tab_row.prop_enum(s, "synch_mode", 'CEL_LAYERS',
+                          text="Unbaked Cels", icon='RENDERLAYERS')
 
-    elif mode == 'BAKED':
-        row = layout.row()
-        row.scale_y = 1.3
-        row.operator("domeanimatic.cel_show_baked",
-                     text="Baked: LiveDomePreview", icon='IMAGE_DATA')
+        if mode == 'CEL_LAYERS':
+            col = cel_box.column(align=False)
+            for slot_id in reversed([layer.slot_id for layer in cel_store.DRAW_ORDER]):
+                draw_row(col, g, slot_id)
+                col.separator(factor=0.2)
+
+        else:  # BAKED
+            row = cel_box.row()
+            row.scale_y = 1.3
+            row.operator("domeanimatic.cel_show_baked",
+                         text="Baked: LiveDomePreview", icon='IMAGE_DATA')
+
+        if mode == 'CEL_LAYERS':
+            unused_count = _count_unused_cel_files()
+            purge_row    = layout.row()
+            purge_row.enabled = unused_count > 0
+            purge_row.operator(
+                "domeanimatic.cel_purge_unused",
+                text=f"Purge Unused ({unused_count})",
+                icon='TRASH',
+            )
 
     else:  # 'OFF'
         layout.label(text="Enable sync to activate painting", icon='INFO')
