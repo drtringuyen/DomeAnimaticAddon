@@ -91,8 +91,8 @@ class DOMEANIMATIC_OT_live_texture_prepare(bpy.types.Operator):
     def execute(self, context):
         g      = gp(context)
         s      = sp(context.scene)
-        width  = max(1, int(s.tex_width  * s.tex_scale))
-        height = max(1, int(s.tex_height * s.tex_scale))
+        width  = max(1, (int(s.tex_width  * s.tex_scale) // 10) * 10) or max(1, int(s.tex_width  * s.tex_scale))
+        height = max(1, (int(s.tex_height * s.tex_scale) // 10) * 10) or max(1, int(s.tex_height * s.tex_scale))
 
         name = cel_store.BAKED_LAYER.datablock_name
         if name in bpy.data.images:
@@ -110,6 +110,15 @@ class DOMEANIMATIC_OT_live_texture_prepare(bpy.types.Operator):
             img.use_fake_user = True
             self.report({'INFO'}, f"'{name}' created at {width}x{height}.")
             vse_helpers.log(f"[LiveTexture] Created {name} at {width}x{height}")
+
+        # Resize BG / Cel_A / Cel_B to the same preview size
+        for slot_id in ('BG', 'CEL_A', 'CEL_B'):
+            cel_img = cel_store.get_cel_image(slot_id)
+            if cel_img is None:
+                continue
+            if cel_img.size[0] != width or cel_img.size[1] != height:
+                cel_img.scale(width, height)
+                vse_helpers.log(f"[LiveTexture] Resized {cel_img.name} to {width}x{height}")
 
         self._try_autolink(s)
         return {'FINISHED'}

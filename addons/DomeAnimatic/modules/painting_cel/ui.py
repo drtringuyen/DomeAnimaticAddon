@@ -36,6 +36,33 @@ def _count_unused_cel_files() -> int:
     return count
 
 
+def draw_baked_row(layout, context) -> None:
+    """[Activate: LiveDomePreview | dirty●] [Clear] [Save]  (task 15)"""
+    live_img = cel_store.get_live_image()
+    is_dirty = live_img.is_dirty if live_img else False
+
+    row = layout.row(align=True)
+    row.scale_y = 1.3
+    if is_dirty:
+        row.alert = True
+
+    row.operator("domeanimatic.cel_show_baked",
+                 text="Activate: LiveDomePreview",
+                 icon='IMAGE_DATA',
+                 depress=is_dirty)
+
+    # Clear
+    op = row.operator("domeanimatic.cel_clear", text="", icon='TEXTURE')
+    op.slot = 'CEL_Baked'
+
+    # Save — depressed + alert when dirty
+    save_sub = row.row(align=True)
+    save_sub.enabled = is_dirty
+    save_op = save_sub.operator("domeanimatic.cel_save", text="", icon='FILE_TICK',
+                                 depress=is_dirty)
+    save_op.slot = 'CEL_Baked'
+
+
 def draw_row(layout, g, slot_id: str) -> None:
     """
     One cel row.
@@ -159,10 +186,11 @@ def _draw_painting_cel(self, context):
                 col.separator(factor=0.2)
 
         else:  # BAKED
-            row = cel_box.row()
-            row.scale_y = 1.3
-            row.operator("domeanimatic.cel_show_baked",
-                         text="Baked: LiveDomePreview", icon='IMAGE_DATA')
+            draw_baked_row(cel_box, context)
+
+        # Auto-save toggle — visible in both CEL_LAYERS and BAKED modes (task 16)
+        auto_row = cel_box.row(align=True)
+        auto_row.prop(s, "cel_auto_save", text="Auto-save on strip change", toggle=True)
 
         if mode == 'CEL_LAYERS':
             unused_count = _count_unused_cel_files()

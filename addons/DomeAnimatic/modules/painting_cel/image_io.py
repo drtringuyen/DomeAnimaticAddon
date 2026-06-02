@@ -113,13 +113,23 @@ def find_closest_cel_file(slot_id: str):
 # ── PNG write helpers ─────────────────────────────────────────────────────────
 
 def get_reference_size() -> tuple[int, int]:
-    """(w, h) from track-1 VSE current frame, fallback (960, 590)."""
+    """(w, h) from track-1 VSE channel-1 source file, floor to nearest 10. Fallback (960, 590)."""
     _, filepath, _, _ = vse_helpers.get_dome_animatic_frame_info()
     if filepath and os.path.exists(filepath):
         ref = bpy.data.images.load(filepath, check_existing=True)
         if ref.size[0] > 0:
-            return ref.size[0], ref.size[1]
+            w = (ref.size[0] // 10) * 10 or ref.size[0]
+            h = (ref.size[1] // 10) * 10 or ref.size[1]
+            return w, h
     return 960, 590
+
+
+def get_preview_size() -> tuple[int, int]:
+    """(w, h) from tex_width/height × tex_scale, floor to nearest 10."""
+    s = sp()
+    w = (int(s.tex_width  * s.tex_scale) // 10) * 10 or max(1, int(s.tex_width  * s.tex_scale))
+    h = (int(s.tex_height * s.tex_scale) // 10) * 10 or max(1, int(s.tex_height * s.tex_scale))
+    return max(1, w), max(1, h)
 
 
 def create_blank_png(abs_path: str, width: int, height: int) -> None:

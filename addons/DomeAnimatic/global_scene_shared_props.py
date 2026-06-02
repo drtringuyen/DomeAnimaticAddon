@@ -81,15 +81,55 @@ def _on_synch_mode_changed(self, context):
 
     if mode == 'BAKED':
         live_img = cel_store.get_live_image()
-        if live_img is None:
-            return
-        for window in bpy.data.window_managers[0].windows:
-            for area in window.screen.areas:
-                if area.type == 'IMAGE_EDITOR':
-                    for space in area.spaces:
-                        if space.type == 'IMAGE_EDITOR':
-                            space.image = live_img
-                            area.tag_redraw()
+        if live_img is not None:
+            for window in bpy.data.window_managers[0].windows:
+                for area in window.screen.areas:
+                    if area.type == 'IMAGE_EDITOR':
+                        for space in area.spaces:
+                            if space.type == 'IMAGE_EDITOR':
+                                space.image = live_img
+                                area.tag_redraw()
+            # Activate LiveDomePreview node in material so paint header shows it
+            mat = self.target_material
+            if mat is not None and mat.use_nodes:
+                for node in mat.node_tree.nodes:
+                    if node.type == 'TEX_IMAGE' and node.image == live_img:
+                        mat.node_tree.nodes.active = node
+                        break
+            # Set paint canvas and enter Texture Paint on dome object (task 11)
+            dome_scene = bpy.data.scenes.get("Dome Animatic")
+            if dome_scene:
+                try:
+                    dome_scene.tool_settings.image_paint.canvas = live_img
+                except Exception:
+                    pass
+            dome_obj = self.dome_object
+            if dome_obj and dome_scene:
+                try:
+                    wm = bpy.data.window_managers[0]
+                    for window in wm.windows:
+                        for area in window.screen.areas:
+                            if area.type == 'VIEW_3D':
+                                for region in area.regions:
+                                    if region.type == 'WINDOW':
+                                        with context.temp_override(window=window,
+                                                                   area=area,
+                                                                   region=region):
+                                            vl = context.view_layer
+                                            for obj in vl.objects:
+                                                obj.select_set(False)
+                                            dome_obj.select_set(True)
+                                            vl.objects.active = dome_obj
+                                            bpy.ops.object.mode_set(mode='TEXTURE_PAINT')
+                                        break  # first VIEW_3D only
+                                else:
+                                    continue
+                                break
+                        else:
+                            continue
+                        break
+                except Exception:
+                    pass
     elif mode == 'CEL_LAYERS':
         # active_cel is still on WindowManager (UI state)
         active_cel = bpy.data.window_managers[0].domeanimatic.active_cel
@@ -243,6 +283,12 @@ class DOMEANIMATICSceneProps(bpy.types.PropertyGroup):
     tex_scale: bpy.props.FloatProperty(
         name="Scale",  default=1.0, min=0.0, max=2.0, step=10, precision=2,
     )
+    cel_auto_save: bpy.props.BoolProperty(
+        name="Auto-save on strip change",
+        description="Silently save dirty cel images when the playhead crosses a strip boundary during playback",
+        default=False,
+    )
+
     # Node image pointers — survive file reopen as long as the Image datablock exists
     bg_mat_image:    bpy.props.PointerProperty(name="BG Material Image",    type=bpy.types.Image)
     cel_a_mat_image: bpy.props.PointerProperty(name="Cel A Material Image", type=bpy.types.Image)

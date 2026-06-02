@@ -21,9 +21,44 @@ from ...global_scene_shared_props import gp, sp
 class _SyncState:
     last_path:       dict[int, str] = {1: "", 2: "", 3: "", 4: ""}
     handler_blocked: bool           = False
+    _was_playing:    bool           = False   # play-state tracking for res switching
+    painting_baked:  bool           = False   # True while user is painting on CEL_Baked
 
 
 _s = _SyncState()
+
+
+# ── Resolution helpers ────────────────────────────────────────────────────────
+
+def _preview_size() -> tuple[int, int]:
+    try:
+        dome = bpy.data.scenes.get("Dome Animatic")
+        sc = dome.domeanimatic if dome else bpy.context.scene.domeanimatic
+        w = (int(sc.tex_width  * sc.tex_scale) // 10) * 10 or max(1, int(sc.tex_width  * sc.tex_scale))
+        h = (int(sc.tex_height * sc.tex_scale) // 10) * 10 or max(1, int(sc.tex_height * sc.tex_scale))
+        return max(1, w), max(1, h)
+    except Exception:
+        return 960, 590
+
+
+def _reference_size() -> tuple[int, int]:
+    try:
+        from ..painting_cel.image_io import get_reference_size
+        return get_reference_size()
+    except Exception:
+        return 960, 590
+
+
+def _all_datablocks() -> list:
+    imgs = []
+    live = cel_store.get_live_image()
+    if live:
+        imgs.append(live)
+    for layer in cel_store.LAYERS:
+        img = bpy.data.images.get(layer.datablock_name)
+        if img:
+            imgs.append(img)
+    return imgs
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -83,9 +118,38 @@ def live_texture_sync_handler(scene, depsgraph=None):
     if mode == 'OFF':
         return
 
+    # ── Play-start detection (task 7) ─────────────────────────────────────────
+    try:
+        is_playing = bpy.context.screen.is_animation_playing
+    except Exception:
+        is_playing = False
+
+    if is_playing and not _s._was_playing:
+        pw, ph = _preview_size()
+        cel_auto_save = getattr(dome_scene.domeanimatic, 'cel_auto_save', False)
+        if cel_auto_save:
+            # Only save channels that currently have a strip (last_path != "").
+            # Channels in a gap have blank pixels — must not overwrite the previous strip's file.
+            for ch, layer in cel_store.BY_CHANNEL.items():
+                if _s.last_path[ch] == "":
+                    continue
+                img = bpy.data.images.get(layer.datablock_name)
+                if img and img.is_dirty and img.filepath_raw:
+                    try:
+                        img.save()
+                    except Exception:
+                        pass
+        for img in _all_datablocks():
+            if img.size[0] != pw or img.size[1] != ph:
+                img.scale(pw, ph)
+        _s._was_playing = True
+
     frame = dome_scene.frame_current
 
     if mode == 'BAKED':
+        # Guard: skip sync write when user is painting on CEL_Baked (task 14)
+        if _s.painting_baked:
+            return
         strip1 = vse_helpers.vse_get_strip_on_channel(dome_scene, 1, frame)
         if strip1:
             path1 = vse_helpers.resolve_strip_image_path(strip1, frame)
@@ -96,6 +160,7 @@ def live_texture_sync_handler(scene, depsgraph=None):
         return
 
     if mode == 'CEL_LAYERS':
+        cel_auto_save = getattr(dome_scene.domeanimatic, 'cel_auto_save', False)
         for ch, layer in cel_store.BY_CHANNEL.items():
             strip = vse_helpers.vse_get_strip_on_channel(dome_scene, ch, frame)
             if not strip:
@@ -106,6 +171,17 @@ def live_texture_sync_handler(scene, depsgraph=None):
             path = vse_helpers.resolve_strip_image_path(strip, frame)
             if not path or not os.path.exists(path) or path == _s.last_path[ch]:
                 continue
+            # Auto-save on strip change when animation is playing (task 13).
+            # Guard: only save when the channel was previously on a real strip (_s.last_path[ch] != "").
+            # A channel coming out of a gap has blank pixels — must not overwrite the old PNG.
+            if is_playing and cel_auto_save and _s.last_path[ch] != "":
+                cel_img_old = bpy.data.images.get(
+                    cel_store.BY_CHANNEL[ch].datablock_name)
+                if cel_img_old and cel_img_old.is_dirty and cel_img_old.filepath_raw:
+                    try:
+                        cel_img_old.save()
+                    except Exception:
+                        pass
             cel_img = cel_store.get_or_create_cel_image(layer.slot_id)
             _load_path_into_image(cel_img, path)
             _s.last_path[ch] = path
@@ -121,6 +197,23 @@ def scene_switch_handler(scene, depsgraph=None):
         dome_scene = bpy.data.scenes.get("Dome Animatic")
         if current is None or dome_scene is None:
             return
+
+        # ── Play-stop detection (task 8) ──────────────────────────────────────
+        try:
+            is_playing = bpy.context.screen.is_animation_playing
+        except Exception:
+            is_playing = False
+
+        if _s._was_playing and not is_playing:
+            rw, rh = _reference_size()
+            for img in _all_datablocks():
+                raw = img.filepath_raw
+                if raw and os.path.exists(bpy.path.abspath(raw)):
+                    img.reload()
+                elif img.size[0] != rw or img.size[1] != rh:
+                    img.scale(rw, rh)
+            _s._was_playing = False
+
         is_dome        = current.name == "Dome Animatic"
         handler_active = live_texture_sync_handler in bpy.app.handlers.frame_change_pre
         if is_dome and not handler_active:

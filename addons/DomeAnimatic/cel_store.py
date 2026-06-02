@@ -49,6 +49,7 @@ BAKED_LAYER = CelLayer('CEL_Baked', 1, 'LiveDomePreview', 'Baked', -1)
 
 BY_CHANNEL: dict[int, CelLayer]  = {l.vse_channel: l for l in LAYERS}
 BY_SLOT:    dict[str, CelLayer]  = {l.slot_id:     l for l in LAYERS}
+BY_SLOT['CEL_Baked'] = BAKED_LAYER
 DRAW_ORDER: list[CelLayer]       = sorted(LAYERS, key=lambda l: l.z_order)
 
 # cel channel numbers as a set — used for fast membership tests in VSE handlers
@@ -64,7 +65,10 @@ def get_or_create_cel_image(slot_id: str,
 
     New datablocks are zero-filled (fully transparent) so they don't occlude
     layers below before a file is loaded.
+    CEL_Baked delegates to get_or_create_live_image() (alpha=False).
     """
+    if slot_id == 'CEL_Baked':
+        return get_or_create_live_image(width, height)
     layer = BY_SLOT[slot_id]
     img   = bpy.data.images.get(layer.datablock_name)
     if img is None:

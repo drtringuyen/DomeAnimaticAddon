@@ -20,9 +20,32 @@ from . import image_io
 
 # ── Active-slot helper ────────────────────────────────────────────────────────
 
+_CEL_ENUM_SLOTS = {'BG', 'CEL_A', 'CEL_B'}
+
 def activate_slot(slot_id: str) -> None:
-    """Set slot as active — triggers _on_active_cel_changed for Image Editor + canvas."""
-    gp().active_cel = slot_id
+    """Set slot as active — triggers _on_active_cel_changed for Image Editor + canvas.
+    CEL_Baked is not in the active_cel enum so it is silently skipped."""
+    if slot_id in _CEL_ENUM_SLOTS:
+        gp().active_cel = slot_id
+
+
+def _blank_other_empty_channels(dome_scene, inserted_channel: int, frame: int) -> None:
+    """After inserting a strip, blank every cel channel that has no strip at this frame.
+
+    Without this, channels with stale opaque pixels from a previous frame cover the
+    newly inserted content in the GPU overlay and material compositing.
+    """
+    try:
+        from ..live_texture import vse_sync as _vse_sync
+        for ch, layer in cel_store.BY_CHANNEL.items():
+            if ch == inserted_channel:
+                continue
+            strip = vse_helpers.vse_get_strip_on_channel(dome_scene, ch, frame)
+            if not strip:
+                _vse_sync._blank_cel_datablock(layer.slot_id)
+                _vse_sync._s.last_path[ch] = ""
+    except Exception:
+        pass
 
 
 # ── Cel folder operator ───────────────────────────────────────────────────────
@@ -89,6 +112,20 @@ class DOMEANIMATIC_OT_cel_set_active(bpy.types.Operator):
             if view3d_area:
                 break
 
+        # Reload/scale to real res BEFORE entering paint mode so the GPU texture
+        # is already up-to-date when Texture Paint binds it. Doing this after
+        # entering paint causes the first stroke to paint to a stale GPU buffer.
+        rw, rh = image_io.get_reference_size()
+        cel_img = cel_store.get_or_create_cel_image(self.slot)
+        raw = cel_img.filepath_raw
+        if raw and os.path.exists(bpy.path.abspath(raw)):
+            cel_img.reload()
+        elif cel_img.size[0] != rw or cel_img.size[1] != rh:
+            cel_img.scale(rw, rh)
+
+        # Set active cel — triggers _on_active_cel_changed (Image Editor + canvas + active node)
+        g.active_cel = self.slot
+
         if view3d_area and view3d_region:
             with context.temp_override(window=view3d_window, area=view3d_area, region=view3d_region):
                 for obj in context.view_layer.objects:
@@ -96,9 +133,6 @@ class DOMEANIMATIC_OT_cel_set_active(bpy.types.Operator):
                 s.dome_object.select_set(True)
                 context.view_layer.objects.active = s.dome_object
                 bpy.ops.object.mode_set(mode='TEXTURE_PAINT')
-
-        # Set active cel — triggers _on_active_cel_changed (Image Editor + canvas redirect)
-        g.active_cel = self.slot
 
         # Proactive invisible-layer warning
         slot_key = self.slot.lower()
@@ -162,14 +196,62 @@ class DOMEANIMATIC_OT_dome_object_picker(bpy.types.Operator):
 
 
 class DOMEANIMATIC_OT_cel_show_baked(bpy.types.Operator):
-    """Show LiveDomePreview in Image Editors (BAKED mode row)."""
+    """Activate LiveDomePreview at real res, set as paint canvas, enter Texture Paint."""
     bl_idname = "domeanimatic.cel_show_baked"
-    bl_label  = "Show Baked Preview"
+    bl_label  = "Activate: LiveDomePreview"
 
     def execute(self, context):
-        live_img = cel_store.get_live_image()
-        if live_img:
-            vse_helpers.set_image_editor_image(context, live_img)
+        s        = sp(context.scene)
+        live_img = cel_store.get_or_create_live_image()
+
+        # Scale to real res (task 10)
+        rw, rh = image_io.get_reference_size()
+        raw    = live_img.filepath_raw
+        if raw and os.path.exists(bpy.path.abspath(raw)):
+            live_img.reload()
+        elif live_img.size[0] != rw or live_img.size[1] != rh:
+            live_img.scale(rw, rh)
+
+        vse_helpers.set_image_editor_image(context, live_img)
+
+        # Set canvas and enter Texture Paint on dome object
+        dome_scene = bpy.data.scenes.get("Dome Animatic")
+        if dome_scene and s.dome_object:
+            try:
+                dome_scene.tool_settings.image_paint.canvas = live_img
+            except Exception:
+                pass
+            view3d_window = view3d_area = view3d_region = None
+            for window in context.window_manager.windows:
+                for area in window.screen.areas:
+                    if area.type == 'VIEW_3D':
+                        for region in area.regions:
+                            if region.type == 'WINDOW':
+                                view3d_window = window
+                                view3d_area   = area
+                                view3d_region = region
+                                break
+                    if view3d_area:
+                        break
+                if view3d_area:
+                    break
+            if view3d_area and view3d_region:
+                with context.temp_override(window=view3d_window,
+                                           area=view3d_area,
+                                           region=view3d_region):
+                    for obj in context.view_layer.objects:
+                        obj.select_set(False)
+                    s.dome_object.select_set(True)
+                    context.view_layer.objects.active = s.dome_object
+                    bpy.ops.object.mode_set(mode='TEXTURE_PAINT')
+
+        # Pause live sync write to LiveDomePreview while painting (task 14)
+        try:
+            from ..live_texture import vse_sync
+            vse_sync._s.painting_baked = True
+        except Exception:
+            pass
+
         return {'FINISHED'}
 
 
@@ -277,7 +359,7 @@ class DOMEANIMATIC_OT_cel_insert_full(bpy.types.Operator):
         vse_helpers.vse_insert_image_strip(dome_scene, channel, abs_path, start, end)
         image_io.load_slot_from_vse(self.slot, w, h)
         activate_slot(self.slot)
-
+        _blank_other_empty_channels(dome_scene, channel, frame)
         vse_helpers.tag_all_image_editors_redraw()
         self.report({'INFO'}, f"[{self.slot}] Full {start}→{end}: {filename}")
         return {'FINISHED'}
@@ -358,6 +440,7 @@ class DOMEANIMATIC_OT_cel_insert_cut(bpy.types.Operator):
 
         image_io.load_slot_from_vse(self.slot, w, h)
         activate_slot(self.slot)
+        _blank_other_empty_channels(dome_scene, channel, frame)
         vse_helpers.tag_all_image_editors_redraw()
         self.report({'INFO'}, f"[{self.slot}] Cut at frame {frame}: {filename}")
         return {'FINISHED'}
@@ -465,7 +548,11 @@ class DOMEANIMATIC_OT_cel_clear(bpy.types.Operator):
             self.report({'WARNING'}, f"No datablock for {self.slot}.")
             return {'CANCELLED'}
         w, h = img.size
-        buf  = np.zeros(w * h * 4, dtype=np.float32)
+        # CEL_Baked has alpha=False — fill opaque black; others fill transparent
+        if self.slot == 'CEL_Baked':
+            buf = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32), w * h)
+        else:
+            buf = np.zeros(w * h * 4, dtype=np.float32)
         img.pixels.foreach_set(buf)
         img.update()
         activate_slot(self.slot)
