@@ -76,8 +76,11 @@ def draw_row(layout, g, slot_id: str) -> None:
 
     dome_scene = bpy.data.scenes.get("Dome Animatic")
     frame      = image_io.dome_frame()
+    # include_muted=True: cel strips are muted in BAKED mode for VSE rendering
+    # but we still need to detect them for UI state (has_strip, is_dirty).
     has_strip  = (dome_scene is not None and
-                  vse_helpers.vse_get_strip_on_channel(dome_scene, channel, frame) is not None)
+                  vse_helpers.vse_get_strip_on_channel(dome_scene, channel, frame,
+                                                       include_muted=True) is not None)
 
     if has_strip:
         filepath = getattr(g, f"{slot_key}_filepath", "")
@@ -101,9 +104,10 @@ def draw_row(layout, g, slot_id: str) -> None:
                            icon='HIDE_OFF' if visible else 'HIDE_ON', depress=visible)
     eye_op.slot = slot_id
 
-    # Label / select
+    # Label / select  — ● prefix when image has unsaved changes
+    label_text = f"{'● ' if is_dirty else ''}{layer.filename_label}: {display}"
     sel_op = row.operator("domeanimatic.cel_set_active",
-                           text=f"{layer.filename_label}: {display}", depress=is_active)
+                           text=label_text, depress=is_active)
     sel_op.slot = slot_id
 
     # Opacity slider
@@ -191,6 +195,28 @@ def _draw_painting_cel(self, context):
         # Auto-save toggle — visible in both CEL_LAYERS and BAKED modes (task 16)
         auto_row = cel_box.row(align=True)
         auto_row.prop(s, "cel_auto_save", text="Auto-save on strip change", toggle=True)
+
+        # Dirty-slots summary: shows which cels have unsaved changes
+        if mode == 'CEL_LAYERS':
+            dome_scene = bpy.data.scenes.get("Dome Animatic")
+            frame      = image_io.dome_frame()
+            dirty_slots = []
+            for layer in cel_store.LAYERS:
+                img = bpy.data.images.get(layer.datablock_name)
+                if img and img.is_dirty:
+                    has = (dome_scene is not None and
+                           vse_helpers.vse_get_strip_on_channel(
+                               dome_scene, layer.vse_channel, frame,
+                               include_muted=True) is not None)
+                    if has:
+                        dirty_slots.append(layer.filename_label)
+            if dirty_slots:
+                warn_row = cel_box.row()
+                warn_row.alert = True
+                warn_row.label(
+                    text=f"Unsaved: {', '.join(dirty_slots)}",
+                    icon='ERROR',
+                )
 
         if mode == 'CEL_LAYERS':
             unused_count = _count_unused_cel_files()
