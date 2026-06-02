@@ -159,9 +159,10 @@ def _on_synch_mode_changed(self, context):
             except Exception:
                 pass
 
-    # Apply VSE track muting + material Menu Switch (lazy import avoids circular deps)
+    # Leaving any mode clears the painting-on-baked guard so scrubbing resumes
     try:
         from .modules.live_texture import vse_sync as _vse_sync
+        _vse_sync._s.painting_baked = False
         _vse_sync._apply_track_muting_by_mode(mode)
     except Exception:
         pass

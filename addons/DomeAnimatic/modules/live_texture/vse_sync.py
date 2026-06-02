@@ -284,11 +284,13 @@ def block_handler() -> None:
 
 
 def unblock_handler() -> None:
-    _s.handler_blocked = False
-    _s.last_path       = {1: "", 2: "", 3: "", 4: ""}
+    _s.handler_blocked  = False
+    _s.painting_baked   = False
+    _s.last_path        = {1: "", 2: "", 3: "", 4: ""}
 
 
 def start_live_sync() -> None:
+    _s.painting_baked = False
     _s.last_path = {1: "", 2: "", 3: "", 4: ""}
     live = cel_store.get_or_create_live_image()
     if live.packed_file is not None:
