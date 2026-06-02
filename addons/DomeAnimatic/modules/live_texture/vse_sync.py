@@ -145,36 +145,47 @@ def live_texture_sync_handler(scene, depsgraph=None):
         _s._was_playing = True
 
     frame = dome_scene.frame_current
+    cel_auto_save = getattr(dome_scene.domeanimatic, 'cel_auto_save', False)
 
     if mode == 'BAKED':
-        # Guard: skip sync write when user is painting on CEL_Baked (task 14)
-        if _s.painting_baked:
-            return
         strip1 = vse_helpers.vse_get_strip_on_channel(dome_scene, 1, frame)
         if strip1:
             path1 = vse_helpers.resolve_strip_image_path(strip1, frame)
             if path1 and os.path.exists(path1) and path1 != _s.last_path[1]:
+                if not is_playing and cel_auto_save and _s.last_path[1] != "":
+                    live_img_save = cel_store.get_or_create_live_image()
+                    if live_img_save.is_dirty and live_img_save.filepath_raw:
+                        try:
+                            live_img_save.save()
+                        except Exception:
+                            pass
+                _s.painting_baked = False
                 _load_path_into_image(cel_store.get_or_create_live_image(), path1)
                 _s.last_path[1] = path1
                 vse_helpers.log(f"[LiveTexture] Ch1 -> LiveDomePreview: {os.path.basename(path1)}")
         return
 
     if mode == 'CEL_LAYERS':
-        cel_auto_save = getattr(dome_scene.domeanimatic, 'cel_auto_save', False)
         for ch, layer in cel_store.BY_CHANNEL.items():
             strip = vse_helpers.vse_get_strip_on_channel(dome_scene, ch, frame)
             if not strip:
                 if _s.last_path[ch] != "":
+                    if not is_playing and cel_auto_save:
+                        img_gap = bpy.data.images.get(layer.datablock_name)
+                        if img_gap and img_gap.is_dirty and img_gap.filepath_raw:
+                            try:
+                                img_gap.save()
+                            except Exception:
+                                pass
                     _blank_cel_datablock(layer.slot_id)
                     _s.last_path[ch] = ""
                 continue
             path = vse_helpers.resolve_strip_image_path(strip, frame)
             if not path or not os.path.exists(path) or path == _s.last_path[ch]:
                 continue
-            # Auto-save on strip change when animation is playing (task 13).
             # Guard: only save when the channel was previously on a real strip (_s.last_path[ch] != "").
             # A channel coming out of a gap has blank pixels — must not overwrite the old PNG.
-            if is_playing and cel_auto_save and _s.last_path[ch] != "":
+            if not is_playing and cel_auto_save and _s.last_path[ch] != "":
                 cel_img_old = bpy.data.images.get(
                     cel_store.BY_CHANNEL[ch].datablock_name)
                 if cel_img_old and cel_img_old.is_dirty and cel_img_old.filepath_raw:
