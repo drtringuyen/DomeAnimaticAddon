@@ -148,7 +148,7 @@ def live_texture_sync_handler(scene, depsgraph=None):
     cel_auto_save = getattr(dome_scene.domeanimatic, 'cel_auto_save', False)
 
     if mode == 'BAKED':
-        strip1 = vse_helpers.vse_get_strip_on_channel(dome_scene, 1, frame)
+        strip1 = vse_helpers.vse_get_strip_on_channel(dome_scene, 1, frame, include_muted=True)
         if strip1:
             path1 = vse_helpers.resolve_strip_image_path(strip1, frame)
             if path1 and os.path.exists(path1) and path1 != _s.last_path[1]:
@@ -164,7 +164,7 @@ def live_texture_sync_handler(scene, depsgraph=None):
 
     if mode == 'CEL_LAYERS':
         for ch, layer in cel_store.BY_CHANNEL.items():
-            strip = vse_helpers.vse_get_strip_on_channel(dome_scene, ch, frame)
+            strip = vse_helpers.vse_get_strip_on_channel(dome_scene, ch, frame, include_muted=True)
             if not strip:
                 if _s.last_path[ch] != "":
                     if not is_playing and cel_auto_save:

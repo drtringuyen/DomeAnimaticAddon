@@ -40,7 +40,7 @@ def _blank_other_empty_channels(dome_scene, inserted_channel: int, frame: int) -
         for ch, layer in cel_store.BY_CHANNEL.items():
             if ch == inserted_channel:
                 continue
-            strip = vse_helpers.vse_get_strip_on_channel(dome_scene, ch, frame)
+            strip = vse_helpers.vse_get_strip_on_channel(dome_scene, ch, frame, include_muted=True)
             if not strip:
                 _vse_sync._blank_cel_datablock(layer.slot_id)
                 _vse_sync._s.last_path[ch] = ""

@@ -238,7 +238,7 @@ def load_slot_from_vse(slot_id: str, w: int, h: int) -> None:
         return
     channel = cel_store.BY_SLOT[slot_id].vse_channel
     frame   = dome_frame()
-    strip   = vse_helpers.vse_get_strip_on_channel(dome_scene, channel, frame)
+    strip   = vse_helpers.vse_get_strip_on_channel(dome_scene, channel, frame, include_muted=True)
     if strip is None:
         return
     path = vse_helpers.resolve_strip_image_path(strip, frame)
