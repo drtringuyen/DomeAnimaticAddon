@@ -114,7 +114,14 @@ def find_closest_cel_file(slot_id: str):
 
 def get_reference_size() -> tuple[int, int]:
     """(w, h) from track-1 VSE channel-1 source file, floor to nearest 10. Fallback (960, 590)."""
-    _, filepath, _, _ = vse_helpers.get_dome_animatic_frame_info()
+    dome_scene = bpy.data.scenes.get("Dome Animatic")
+    if dome_scene is None:
+        return 960, 590
+    frame = dome_scene.frame_current
+    strip = vse_helpers.vse_get_strip_on_channel(dome_scene, 1, frame, include_muted=True)
+    if strip is None:
+        return 960, 590
+    filepath = vse_helpers.resolve_strip_image_path(strip, frame)
     if filepath and os.path.exists(filepath):
         ref = bpy.data.images.load(filepath, check_existing=True)
         if ref.size[0] > 0:
