@@ -358,6 +358,13 @@ class DOMEANIMATIC_OT_cel_insert_full(bpy.types.Operator):
 
         vse_helpers.vse_insert_image_strip(dome_scene, channel, abs_path, start, end)
         image_io.load_slot_from_vse(self.slot, w, h)
+        # Tell the sync handler this path is already loaded so the first stroke
+        # is not wiped by a reload when the user next changes frames.
+        try:
+            from ..live_texture import vse_sync as _vse_sync
+            _vse_sync._s.last_path[channel] = abs_path
+        except Exception:
+            pass
         activate_slot(self.slot)
         _blank_other_empty_channels(dome_scene, channel, frame)
         vse_helpers.tag_all_image_editors_redraw()
@@ -439,6 +446,13 @@ class DOMEANIMATIC_OT_cel_insert_cut(bpy.types.Operator):
             dome_scene.sequence_editor.active_strip = new_strip
 
         image_io.load_slot_from_vse(self.slot, w, h)
+        # Tell the sync handler this path is already loaded so the first stroke
+        # is not wiped by a reload when the user next changes frames.
+        try:
+            from ..live_texture import vse_sync as _vse_sync
+            _vse_sync._s.last_path[channel] = abs_path
+        except Exception:
+            pass
         activate_slot(self.slot)
         _blank_other_empty_channels(dome_scene, channel, frame)
         vse_helpers.tag_all_image_editors_redraw()

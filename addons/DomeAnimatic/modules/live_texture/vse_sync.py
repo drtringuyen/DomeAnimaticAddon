@@ -152,13 +152,10 @@ def live_texture_sync_handler(scene, depsgraph=None):
         if strip1:
             path1 = vse_helpers.resolve_strip_image_path(strip1, frame)
             if path1 and os.path.exists(path1) and path1 != _s.last_path[1]:
-                if not is_playing and cel_auto_save and _s.last_path[1] != "":
-                    live_img_save = cel_store.get_or_create_live_image()
-                    if live_img_save.is_dirty and live_img_save.filepath_raw:
-                        try:
-                            live_img_save.save()
-                        except Exception:
-                            pass
+                # Auto-save is intentionally disabled for BAKED mode: saving back
+                # to the original baked files would be destructive, and MOVIE strips
+                # (which are common on channel 1) cannot be written to at all.
+                # Users must save manually in BAKED mode.
                 _s.painting_baked = False
                 _load_path_into_image(cel_store.get_or_create_live_image(), path1)
                 _s.last_path[1] = path1
