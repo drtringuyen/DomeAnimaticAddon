@@ -119,10 +119,28 @@ def _draw_overlay() -> None:
 
     g = gp()
 
+    # In CEL_LAYERS mode (viewing a cel) cover the editor's native drawing of
+    # space.image with an opaque backdrop first, so the stack below is a clean
+    # composite and each layer's eye/opacity reads true — otherwise the native
+    # full-opacity image bleeds through wherever the overlay is transparent.
+    try:
+        synch_mode = ctx.scene.domeanimatic.synch_mode
+    except Exception:
+        synch_mode = None
+    cel_names     = {layer.datablock_name for layer in cel_store.LAYERS}
+    draw_backdrop = (synch_mode == 'CEL_LAYERS' and shown_img.name in cel_names)
+
     try:
         gpu.state.scissor_set(sc_x, sc_y, sc_w, sc_h)
         gpu.state.scissor_test_set(True)
         gpu.state.blend_set('ALPHA')
+
+        if draw_backdrop:
+            bd_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+            bd_batch  = batch_for_shader(bd_shader, 'TRI_FAN', {"pos": verts})
+            bd_shader.bind()
+            bd_shader.uniform_float("color", (0.0, 0.0, 0.0, 1.0))
+            bd_batch.draw(bd_shader)
 
         for layer in cel_store.DRAW_ORDER:
             slot_key = layer.slot_id.lower()

@@ -158,6 +158,8 @@ def _on_synch_mode_changed(self, context):
                 dome_scene.tool_settings.image_paint.canvas = img
             except Exception:
                 pass
+        # Align shader opacity with the current per-slot UI state
+        sync_cel_layers_to_material(context)
 
     # Leaving any mode clears the painting-on-baked guard so scrubbing resumes
     try:
@@ -170,6 +172,52 @@ def _on_synch_mode_changed(self, context):
         from .modules.live_texture.live_texture_ops import _set_menu_switch
         socket = 'Cels' if mode == 'CEL_LAYERS' else 'Baked'
         _set_menu_switch(self, socket)
+    except Exception:
+        pass
+
+
+# ── Cel layer visibility/opacity callback ─────────────────────────────────────
+
+def sync_cel_layers_to_material(context=None) -> None:
+    """Push per-slot visibility*opacity into the cel-mix node group of the
+    target material so the shader matches the Image Editor composite.
+    The group exposes one '<layer>.opacity' input per cel slot."""
+    g     = gp(context)
+    scene = (context.scene if context else None) or bpy.context.scene
+    mat   = scene.domeanimatic.target_material
+    if mat is None:
+        for name in ("Dome_Animatic", "Dome Animatic", "DomeAnimatic"):
+            mat = bpy.data.materials.get(name)
+            if mat:
+                break
+    if mat is None or not mat.use_nodes:
+        return
+    group = None
+    for node in mat.node_tree.nodes:
+        if node.type == 'GROUP' and 'Cel_A.opacity' in node.inputs:
+            group = node
+            break
+    if group is None:
+        return
+    for slot_key, sock in (('bg',    'Cel_BG.opacity'),
+                           ('cel_a', 'Cel_A.opacity'),
+                           ('cel_b', 'Cel_B.opacity')):
+        inp = group.inputs.get(sock)
+        if inp is None:
+            continue
+        visible = getattr(g, f"{slot_key}_visible", True)
+        value   = float(getattr(g, f"{slot_key}_opacity", 1.0)) if visible else 0.0
+        if inp.default_value != value:
+            inp.default_value = value
+
+
+def _on_cel_layer_prop_changed(self, context):
+    """Visibility eye / opacity slider changed — refresh the Image Editor
+    composite live and mirror the value into the material shader."""
+    sync_cel_layers_to_material(context)
+    try:
+        from . import vse_helpers
+        vse_helpers.tag_all_image_editors_redraw()
     except Exception:
         pass
 
@@ -222,17 +270,24 @@ class DOMEANIMATICGlobalProps(bpy.types.PropertyGroup):
         default=True,
     )
 
-    # Per-slot visibility/opacity/filepath — pure UI state, OK to reset on reload
-    bg_visible:  bpy.props.BoolProperty(name="BG Visible",   default=True)
-    bg_opacity:  bpy.props.FloatProperty(name="BG Opacity",  default=1.0, min=0.0, max=1.0, subtype='FACTOR')
+    # Per-slot visibility/opacity/filepath — pure UI state, OK to reset on reload.
+    # visible/opacity updates propagate to Image Editor overlay + material shader.
+    bg_visible:  bpy.props.BoolProperty(name="BG Visible",   default=True,
+                                        update=_on_cel_layer_prop_changed)
+    bg_opacity:  bpy.props.FloatProperty(name="BG Opacity",  default=1.0, min=0.0, max=1.0,
+                                         subtype='FACTOR', update=_on_cel_layer_prop_changed)
     bg_filepath: bpy.props.StringProperty(name="BG Filepath", default="", subtype='FILE_PATH')
 
-    cel_a_visible:  bpy.props.BoolProperty(name="Cel A Visible",   default=True)
-    cel_a_opacity:  bpy.props.FloatProperty(name="Cel A Opacity",  default=1.0, min=0.0, max=1.0, subtype='FACTOR')
+    cel_a_visible:  bpy.props.BoolProperty(name="Cel A Visible",   default=True,
+                                           update=_on_cel_layer_prop_changed)
+    cel_a_opacity:  bpy.props.FloatProperty(name="Cel A Opacity",  default=1.0, min=0.0, max=1.0,
+                                            subtype='FACTOR', update=_on_cel_layer_prop_changed)
     cel_a_filepath: bpy.props.StringProperty(name="Cel A Filepath", default="", subtype='FILE_PATH')
 
-    cel_b_visible:  bpy.props.BoolProperty(name="Cel B Visible",   default=True)
-    cel_b_opacity:  bpy.props.FloatProperty(name="Cel B Opacity",  default=1.0, min=0.0, max=1.0, subtype='FACTOR')
+    cel_b_visible:  bpy.props.BoolProperty(name="Cel B Visible",   default=True,
+                                           update=_on_cel_layer_prop_changed)
+    cel_b_opacity:  bpy.props.FloatProperty(name="Cel B Opacity",  default=1.0, min=0.0, max=1.0,
+                                            subtype='FACTOR', update=_on_cel_layer_prop_changed)
     cel_b_filepath: bpy.props.StringProperty(name="Cel B Filepath", default="", subtype='FILE_PATH')
 
 
