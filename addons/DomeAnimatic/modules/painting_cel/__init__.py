@@ -1,4 +1,5 @@
-from . import gpu_overlay, paint_guard, cel_layer_ops, lasso_transform_ops, ui
+from . import (gpu_overlay, paint_guard, cel_layer_ops,
+               lasso_raster, lasso_draw, lasso_transform_ops, ui)
 
 
 def register():

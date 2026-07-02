@@ -11,6 +11,11 @@ and immediately grab it to place the next duplicate.
 
 States: DRAW -> FLOAT_IDLE <-> GRAB / ROTATE / SCALE.
 The floating piece carries a single 2D affine  p' = scale * R(angle) * p + t.
+
+This module holds only the operator (state machine + modal dispatch + commit
+paths). Two siblings carry the rest:
+  * lasso_draw.py   — all GPU preview drawing + the draw-handler lifecycle.
+  * lasso_raster.py — pure numpy pixel helpers + the affine composite bake.
 """
 
 import math
@@ -19,15 +24,8 @@ import bpy
 
 try:
     import gpu
-    from gpu_extras.batch import batch_for_shader
 except Exception:
     gpu = None
-    batch_for_shader = None
-
-try:
-    import blf
-except Exception:
-    blf = None
 
 try:
     import numpy as np
@@ -36,293 +34,11 @@ except ImportError:
 
 from ... import cel_store, vse_helpers
 from ...global_scene_shared_props import gp
+from . import lasso_draw, lasso_raster
 
 
-_DRAW_HANDLE = None   # module-level SpaceImageEditor POST_PIXEL handle
-_ACTIVE_OP   = None   # the running lasso operator instance (one at a time)
-_DIAG_DONE   = False
-
-CLOSE_THRESHOLD_PX  = 12.0   # region pixels — click this close to point 0 closes
-DBL_CLICK_DIST_PX   = 6.0    # region pixels — manual double-click fallback
-BANNER_H            = 24
-
-
-def _diag(msg: str) -> None:
-    global _DIAG_DONE
-    if _DIAG_DONE:
-        return
-    try:
-        if gp().show_labels:
-            print(f"[LassoTransform] {msg}")
-            _DIAG_DONE = True
-    except Exception:
-        pass
-
-
-# ── Shaders ───────────────────────────────────────────────────────────────────
-
-_IMG_SHADER      = None
-_IMG_SHADER_KIND = None
-
-
-def _get_image_shader():
-    global _IMG_SHADER, _IMG_SHADER_KIND
-    if _IMG_SHADER is not None:
-        return _IMG_SHADER, _IMG_SHADER_KIND
-    if gpu is None:
-        return None, None
-    for name in ('IMAGE_COLOR', 'IMAGE'):
-        try:
-            _IMG_SHADER      = gpu.shader.from_builtin(name)
-            _IMG_SHADER_KIND = name
-            return _IMG_SHADER, _IMG_SHADER_KIND
-        except Exception:
-            continue
-    return None, None
-
-
-def _get_line_shader():
-    for name in ('POLYLINE_UNIFORM_COLOR', 'UNIFORM_COLOR'):
-        try:
-            return gpu.shader.from_builtin(name), name
-        except Exception:
-            continue
-    return None, None
-
-
-# ── Numpy helpers ─────────────────────────────────────────────────────────────
-
-def _read_pixels(img) -> "np.ndarray":
-    """Full image as (h, w, 4) float32 via foreach_get."""
-    w, h = img.size
-    buf  = np.empty(w * h * 4, dtype=np.float32)
-    img.pixels.foreach_get(buf)
-    return buf.reshape(h, w, 4)
-
-
-def _write_pixels(img, buf) -> None:
-    img.pixels.foreach_set(np.ascontiguousarray(buf, dtype=np.float32).ravel())
-    img.update()
-
-
-def _rasterize_polygon(points_px, bx0: int, by0: int, bw: int, bh: int) -> "np.ndarray":
-    """Even-odd point-in-polygon mask (bh, bw) bool, tested at pixel centers."""
-    yy, xx = np.mgrid[0:bh, 0:bw]
-    xs = xx.astype(np.float32) + (bx0 + 0.5)
-    ys = yy.astype(np.float32) + (by0 + 0.5)
-    inside = np.zeros((bh, bw), dtype=bool)
-    pts = np.asarray(points_px, dtype=np.float32)
-    px1, py1 = pts[:, 0], pts[:, 1]
-    px2, py2 = np.roll(px1, -1), np.roll(py1, -1)
-    with np.errstate(divide='ignore', invalid='ignore'):
-        for i in range(len(pts)):
-            crosses = (py1[i] > ys) != (py2[i] > ys)
-            if not crosses.any():
-                continue
-            x_at = (px2[i] - px1[i]) * (ys - py1[i]) / (py2[i] - py1[i]) + px1[i]
-            inside ^= crosses & (xs < x_at)
-    return inside
-
-
-def _make_texture(buf_hw4):
-    """Upload a (h, w, 4) float32 numpy buffer as a GPUTexture (straight alpha)."""
-    h, w = buf_hw4.shape[:2]
-    flat = np.ascontiguousarray(buf_hw4, dtype=np.float32).ravel()
-    data = gpu.types.Buffer('FLOAT', w * h * 4, flat)
-    return gpu.types.GPUTexture((w, h), format='RGBA16F', data=data)
-
-
-# ── Draw handler (module-level, one running op at a time) ─────────────────────
-
-def _draw_lasso() -> None:
-    op = _ACTIVE_OP
-    if op is None or gpu is None:
-        return
-    ctx   = bpy.context
-    space = ctx.space_data
-    if space is None or space.type != 'IMAGE_EDITOR':
-        return
-    region = ctx.region
-    if region is None or region.type != 'WINDOW':
-        return
-    try:
-        x0, y0 = region.view2d.view_to_region(0.0, 0.0, clip=False)
-        x1, y1 = region.view2d.view_to_region(1.0, 1.0, clip=False)
-    except Exception as e:
-        _diag(f"view_to_region: {e}")
-        return
-
-    def to_region(px, py):
-        return (x0 + (px / op._w) * (x1 - x0),
-                y0 + (py / op._h) * (y1 - y0))
-
-    try:
-        if op._state != 'DRAW':
-            _draw_composite(op, region, x0, y0, x1, y1, to_region)
-        _draw_outline(op, region, to_region)
-        _draw_status(op, region)
-    except Exception as e:
-        _diag(f"draw: {e}")
-
-
-def _draw_composite(op, region, x0, y0, x1, y1, to_region) -> None:
-    """Redraw the full cel stack with the hole substituted on the active layer
-    and the floating cut-out injected at its destination layer's depth."""
-    shader, kind = _get_image_shader()
-    if shader is None:
-        _diag("no image shader")
-        return
-
-    sc_x = max(0, int(round(x0)))
-    sc_y = max(0, int(round(y0)))
-    sc_w = min(region.width,  int(round(x1))) - sc_x
-    sc_h = min(region.height, int(round(y1))) - sc_y
-    if sc_w <= 0 or sc_h <= 0:
-        return
-
-    verts   = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
-    uvs     = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
-    indices = [(0, 1, 2), (0, 2, 3)]
-
-    g          = gp()
-    float_slot = op._slot if op._dest_layer == 'ACTIVE' else op._upper_slot()
-
-    try:
-        gpu.state.scissor_set(sc_x, sc_y, sc_w, sc_h)
-        gpu.state.scissor_test_set(True)
-        gpu.state.blend_set('ALPHA')
-
-        # Opaque backdrop — covers the editor's native drawing + gpu_overlay so
-        # the CUT hole reads as truly transparent.
-        bg_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-        bg_batch  = batch_for_shader(bg_shader, 'TRI_FAN', {"pos": verts})
-        bg_shader.bind()
-        bg_shader.uniform_float("color", (0.11, 0.11, 0.11, 1.0))
-        bg_batch.draw(bg_shader)
-
-        for layer in cel_store.DRAW_ORDER:
-            slot_key = layer.slot_id.lower()
-            visible  = getattr(g, f"{slot_key}_visible", True)
-            opacity  = float(getattr(g, f"{slot_key}_opacity", 1.0))
-            if visible:
-                if layer.slot_id == op._slot and op._source_mode == 'CUT':
-                    tex = op._hole_tex
-                else:
-                    img = cel_store.get_cel_image(layer.slot_id)
-                    tex = None
-                    if img is not None:
-                        try:
-                            tex = gpu.texture.from_image(img)
-                        except Exception as e:
-                            _diag(f"texture.from_image {layer.slot_id}: {e}")
-                if tex is not None:
-                    _draw_tex_quad(shader, kind, tex, verts, uvs, indices,
-                                   (1.0, 1.0, 1.0, opacity))
-            # Floating cut-out at its destination layer's depth
-            if layer.slot_id == float_slot and op._float_tex is not None:
-                corners = op._transformed_bbox_corners()
-                fverts  = [to_region(cx, cy) for cx, cy in corners]
-                _draw_tex_quad(shader, kind, op._float_tex, fverts, uvs, indices,
-                               (1.0, 1.0, 1.0, 1.0))
-    finally:
-        gpu.state.blend_set('NONE')
-        gpu.state.scissor_test_set(False)
-
-
-def _draw_tex_quad(shader, kind, tex, verts, uvs, indices, rgba) -> None:
-    try:
-        batch = batch_for_shader(shader, 'TRIS',
-                                  {"pos": verts, "texCoord": uvs},
-                                  indices=indices)
-    except Exception as e:
-        _diag(f"batch_for_shader: {e}")
-        return
-    shader.bind()
-    try:
-        shader.uniform_sampler("image", tex)
-    except Exception as e:
-        _diag(f"uniform_sampler: {e}")
-    if kind == 'IMAGE_COLOR':
-        try:
-            shader.uniform_float("color", rgba)
-        except Exception as e:
-            _diag(f"uniform_float: {e}")
-    batch.draw(shader)
-
-
-def _draw_outline(op, region, to_region) -> None:
-    """Lasso polygon outline: points + rubber band in DRAW, the transformed
-    selection boundary in the floating states."""
-    if op._state == 'DRAW':
-        if not op._points:
-            return
-        pts = [to_region(px, py) for px, py in op._points]
-        if op._cursor_px is not None:
-            pts.append(to_region(*op._cursor_px))
-        pts.append(pts[0])   # closing hint back to the first point
-        color = (1.0, 1.0, 1.0, 0.9)
-    else:
-        moved = op._affine_apply_points(op._points)
-        pts   = [to_region(px, py) for px, py in moved]
-        pts.append(pts[0])
-        color = (0.2, 0.8, 1.0, 0.9)
-
-    shader, kind = _get_line_shader()
-    if shader is None:
-        return
-    gpu.state.blend_set('ALPHA')
-    batch = batch_for_shader(shader, 'LINE_STRIP', {"pos": pts})
-    shader.bind()
-    if kind == 'POLYLINE_UNIFORM_COLOR':
-        shader.uniform_float("viewportSize", (region.width, region.height))
-        shader.uniform_float("lineWidth", 2.0)
-    shader.uniform_float("color", color)
-    batch.draw(shader)
-
-    # First-point handle so the user can see where clicking closes the lasso
-    if op._state == 'DRAW':
-        pt_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-        gpu.state.point_size_set(8.0)
-        pt_batch = batch_for_shader(pt_shader, 'POINTS', {"pos": [pts[0]]})
-        pt_shader.bind()
-        pt_shader.uniform_float("color", (1.0, 0.6, 0.1, 1.0))
-        pt_batch.draw(pt_shader)
-        gpu.state.point_size_set(1.0)
-    gpu.state.blend_set('NONE')
-
-
-_STATUS_TEXT = {
-    'DRAW':       "Lasso: click points, Enter to close, Esc cancel",
-    'FLOAT_IDLE': "Shift+D duplicate | Ctrl+J dup->above | Ctrl+X cut->above | "
-                  "X delete | G/R/S | Enter apply | Esc",
-    'GRAB':       "Grab: move mouse | LMB/Enter confirm | RMB/Esc cancel",
-    'ROTATE':     "Rotate around selection center | LMB/Enter confirm | RMB/Esc cancel",
-    'SCALE':      "Scale around selection center | LMB/Enter confirm | RMB/Esc cancel",
-}
-
-
-def _draw_status(op, region) -> None:
-    if blf is None:
-        return
-    text = _STATUS_TEXT.get(op._state, "")
-    if op._dest_layer == 'UPPER':
-        mode = "cut" if op._source_mode == 'CUT' else "dup"
-        text += f"   [{mode} -> {op._upper_slot()}]"
-    y = region.height - BANNER_H
-    gpu.state.blend_set('ALPHA')
-    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-    batch  = batch_for_shader(shader, 'TRI_FAN', {"pos": [
-        (0, y), (region.width, y),
-        (region.width, region.height), (0, region.height),
-    ]})
-    shader.bind()
-    shader.uniform_float("color", (0.08, 0.08, 0.08, 0.8))
-    batch.draw(shader)
-    gpu.state.blend_set('NONE')
-    blf.position(0, 10, y + 7, 0)
-    blf.size(0, 13)
-    blf.color(0, 1.0, 1.0, 1.0, 1.0)
-    blf.draw(0, f"Lasso Transform [{op._slot}] — {text}")
+CLOSE_THRESHOLD_PX = 12.0   # region pixels — click this close to point 0 closes
+DBL_CLICK_DIST_PX  = 6.0    # region pixels — manual double-click fallback
 
 
 # ── Operator ──────────────────────────────────────────────────────────────────
@@ -346,8 +62,7 @@ class DOMEANIMATIC_OT_lasso_transform(bpy.types.Operator):
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
     def invoke(self, context, event):
-        global _ACTIVE_OP, _DRAW_HANDLE
-        if _ACTIVE_OP is not None:
+        if lasso_draw.get_active_op() is not None:
             self.report({'WARNING'}, "Lasso Transform is already running.")
             return {'CANCELLED'}
         if gpu is None or np is None:
@@ -417,10 +132,8 @@ class DOMEANIMATIC_OT_lasso_transform(bpy.types.Operator):
         self._sub_start_dist  = 1.0
         self._pivot_px        = (0.0, 0.0)
 
-        if _DRAW_HANDLE is None:
-            _DRAW_HANDLE = bpy.types.SpaceImageEditor.draw_handler_add(
-                _draw_lasso, (), 'WINDOW', 'POST_PIXEL')
-        _ACTIVE_OP = self
+        lasso_draw.set_active_op(self)
+        lasso_draw.ensure_handler()
 
         context.window.cursor_modal_set('CROSSHAIR')
         context.window_manager.modal_handler_add(self)
@@ -431,14 +144,8 @@ class DOMEANIMATIC_OT_lasso_transform(bpy.types.Operator):
         self._cleanup(context)
 
     def _cleanup(self, context) -> None:
-        global _ACTIVE_OP, _DRAW_HANDLE
-        if _DRAW_HANDLE is not None:
-            try:
-                bpy.types.SpaceImageEditor.draw_handler_remove(_DRAW_HANDLE, 'WINDOW')
-            except Exception:
-                pass
-            _DRAW_HANDLE = None
-        _ACTIVE_OP = None
+        lasso_draw.remove_handler()
+        lasso_draw.clear_active_op()
         self._float_tex = None
         self._hole_tex  = None
         self._mask      = None
@@ -569,13 +276,14 @@ class DOMEANIMATIC_OT_lasso_transform(bpy.types.Operator):
             self._points = []
             return {'RUNNING_MODAL'}
 
-        mask = _rasterize_polygon(self._points, bx0, by0, bx1 - bx0, by1 - by0)
+        mask = lasso_raster.rasterize_polygon(self._points, bx0, by0,
+                                              bx1 - bx0, by1 - by0)
         if not mask.any():
             self.report({'WARNING'}, "Lasso selected no pixels — start again.")
             self._points = []
             return {'RUNNING_MODAL'}
 
-        src_buf = _read_pixels(self._image)
+        src_buf = lasso_raster.read_pixels(self._image)
 
         patch = src_buf[by0:by1, bx0:bx1].copy()
         patch[..., 3] = np.where(mask, patch[..., 3], 0.0)
@@ -585,8 +293,8 @@ class DOMEANIMATIC_OT_lasso_transform(bpy.types.Operator):
                                              hole[by0:by1, bx0:bx1, 3])
 
         try:
-            self._float_tex = _make_texture(patch)
-            self._hole_tex  = _make_texture(hole)
+            self._float_tex = lasso_raster.make_texture(patch)
+            self._hole_tex  = lasso_raster.make_texture(hole)
         except Exception as e:
             self.report({'ERROR'}, f"GPU texture upload failed: {e}")
             return self._cancel_op(context)
@@ -714,9 +422,9 @@ class DOMEANIMATIC_OT_lasso_transform(bpy.types.Operator):
 
     def _delete_selection(self, context):
         """X — erase the selected region on the active cel and finish."""
-        buf = _read_pixels(self._image)
+        buf = lasso_raster.read_pixels(self._image)
         self._apply_hole(buf)
-        _write_pixels(self._image, buf)
+        lasso_raster.write_pixels(self._image, buf)
         self._cleanup(context)
         self.report({'INFO'}, f"[{self._slot}] Lasso selection deleted.")
         return {'FINISHED'}
@@ -735,11 +443,11 @@ class DOMEANIMATIC_OT_lasso_transform(bpy.types.Operator):
         else:
             dest_img = self._image
 
-        act_buf = _read_pixels(self._image)
+        act_buf = lasso_raster.read_pixels(self._image)
         if dest_img == self._image:
             dest_buf = act_buf
         else:
-            dest_buf = _read_pixels(dest_img)
+            dest_buf = lasso_raster.read_pixels(dest_img)
 
         if self._source_mode == 'CUT':
             self._apply_hole(act_buf)
@@ -747,9 +455,9 @@ class DOMEANIMATIC_OT_lasso_transform(bpy.types.Operator):
         self._composite_float(dest_buf)
 
         if self._source_mode == 'CUT' or dest_img == self._image:
-            _write_pixels(self._image, act_buf)
+            lasso_raster.write_pixels(self._image, act_buf)
         if dest_img != self._image:
-            _write_pixels(dest_img, dest_buf)
+            lasso_raster.write_pixels(dest_img, dest_buf)
         return True
 
     def _confirm(self, context):
@@ -763,58 +471,12 @@ class DOMEANIMATIC_OT_lasso_transform(bpy.types.Operator):
         return {'FINISHED'}
 
     def _composite_float(self, dest_buf) -> None:
-        """Sample the floating patch through the inverse affine (bilinear,
-        premultiplied) and alpha-over it into dest_buf — fully vectorized."""
-        dh, dw = dest_buf.shape[:2]
-
-        corners = np.asarray(self._transformed_bbox_corners(), dtype=np.float64)
-        dx0 = max(0,  int(math.floor(corners[:, 0].min())) - 1)
-        dy0 = max(0,  int(math.floor(corners[:, 1].min())) - 1)
-        dx1 = min(dw, int(math.ceil(corners[:, 0].max())) + 1)
-        dy1 = min(dh, int(math.ceil(corners[:, 1].max())) + 1)
-        if dx1 <= dx0 or dy1 <= dy0:
-            return
-
-        # Inverse affine: p = R(-a) * (q - t) / s   at dest pixel centers
-        yy, xx = np.mgrid[dy0:dy1, dx0:dx1]
-        qx = xx.astype(np.float32) + 0.5 - self._tx
-        qy = yy.astype(np.float32) + 0.5 - self._ty
-        ca, sa = math.cos(self._angle), math.sin(self._angle)
-        inv_s  = 1.0 / max(self._scale, 1e-6)
-        u = ( ca * qx + sa * qy) * inv_s - self._bx0 - 0.5
-        v = (-sa * qx + ca * qy) * inv_s - self._by0 - 0.5
-
-        patch_pre = self._patch.copy()
-        patch_pre[..., :3] *= patch_pre[..., 3:4]
-        pw, ph = self._pw, self._ph
-
-        u0 = np.floor(u).astype(np.int32)
-        v0 = np.floor(v).astype(np.int32)
-        fu = (u - u0)[..., None]
-        fv = (v - v0)[..., None]
-
-        def tap(vi, ui):
-            valid = (ui >= 0) & (ui < pw) & (vi >= 0) & (vi < ph)
-            smp = patch_pre[np.clip(vi, 0, ph - 1), np.clip(ui, 0, pw - 1)]
-            return smp * valid[..., None]
-
-        src = (tap(v0,     u0    ) * (1.0 - fu) * (1.0 - fv)
-             + tap(v0,     u0 + 1) * fu         * (1.0 - fv)
-             + tap(v0 + 1, u0    ) * (1.0 - fu) * fv
-             + tap(v0 + 1, u0 + 1) * fu         * fv)
-
-        # Alpha-over in premultiplied space, back to straight
-        dst      = dest_buf[dy0:dy1, dx0:dx1]
-        dst_pre  = dst.copy()
-        dst_pre[..., :3] *= dst_pre[..., 3:4]
-        src_a    = src[..., 3:4]
-        out_pre  = src + dst_pre * (1.0 - src_a)
-        out_a    = out_pre[..., 3:4]
-        out_rgb  = np.zeros_like(out_pre[..., :3])
-        np.divide(out_pre[..., :3], out_a, out=out_rgb, where=out_a > 1e-6)
-
-        dest_buf[dy0:dy1, dx0:dx1, :3] = out_rgb
-        dest_buf[dy0:dy1, dx0:dx1, 3]  = out_pre[..., 3]
+        """Alpha-over the transformed floating patch into dest_buf (delegates
+        to the pure vectorized bake in lasso_raster)."""
+        lasso_raster.composite_float(
+            dest_buf, self._patch, self._transformed_bbox_corners(),
+            self._tx, self._ty, self._angle, self._scale,
+            self._bx0, self._by0)
 
 
 # ── Register ──────────────────────────────────────────────────────────────────
@@ -836,20 +498,14 @@ def register():
 
 
 def unregister():
-    global _DRAW_HANDLE, _ACTIVE_OP
     for km, kmi in _KEYMAPS:
         try:
             km.keymap_items.remove(kmi)
         except Exception:
             pass
     _KEYMAPS.clear()
-    if _DRAW_HANDLE is not None:
-        try:
-            bpy.types.SpaceImageEditor.draw_handler_remove(_DRAW_HANDLE, 'WINDOW')
-        except Exception:
-            pass
-        _DRAW_HANDLE = None
-    _ACTIVE_OP = None
+    lasso_draw.remove_handler()
+    lasso_draw.clear_active_op()
     for cls in reversed(CLASSES):
         try:
             bpy.utils.unregister_class(cls)

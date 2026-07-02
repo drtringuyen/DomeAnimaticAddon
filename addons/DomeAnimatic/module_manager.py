@@ -19,7 +19,6 @@ _loaded: set[str] = set()
 ALL_MODULES: list[dict] = [
     {"name": "live_texture",       "op": "domeanimatic.toggle_live_texture",       "icon": "TEXTURE"},
     {"name": "painting_cel",       "op": "domeanimatic.toggle_painting_cel",       "icon": "BRUSH_DATA"},
-    {"name": "collage_collection", "op": "domeanimatic.toggle_collage_collection", "icon": "RENDERLAYERS"},
     {"name": "transition_vfx",     "op": "domeanimatic.toggle_transition_vfx",     "icon": "SEQUENCE_COLOR_06"},
     {"name": "extra_tools",        "op": "domeanimatic.toggle_extra_tools",         "icon": "TOOL_SETTINGS"},
 ]

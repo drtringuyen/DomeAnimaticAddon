@@ -1,9 +1,8 @@
 """
 global_scene_shared_props.py — Centralized Blender property definitions.
 
-Three PropertyGroups:
+Two PropertyGroups:
 
-  DOMEANIMATICCollageProps →  Collection.domeanimatic     (per-collage collection)
   DOMEANIMATICGlobalProps  →  WindowManager.domeanimatic  (UI-only, NOT saved)
   DOMEANIMATICSceneProps   →  Scene.domeanimatic          (per-scene data, saved in .blend)
 
@@ -17,17 +16,6 @@ Properties that are fine resetting on restart live on WindowManager (gp()):
 """
 
 import bpy
-
-
-# ── Collage PropertyGroup (Collection) ───────────────────────────────────────
-
-class DOMEANIMATICCollageProps(bpy.types.PropertyGroup):
-    """Stored on Collection — identifies and describes one collage unit."""
-
-    is_collage:      bpy.props.BoolProperty(name="Is Collage",      default=False)
-    target_object:   bpy.props.PointerProperty(name="Target Object",   type=bpy.types.Object)
-    target_material: bpy.props.PointerProperty(name="Target Material", type=bpy.types.Material)
-    target_image:    bpy.props.PointerProperty(name="Target Image",    type=bpy.types.Image)
 
 
 # ── Active cel change callback ────────────────────────────────────────────────
@@ -222,15 +210,6 @@ def _on_cel_layer_prop_changed(self, context):
         pass
 
 
-# ── Camera zoom callback (used by collage_collection module) ──────────────────
-
-def _on_camera_zoom_changed(self, context):
-    cam = context.scene.camera
-    if cam and cam.data and cam.data.type == 'ORTHO':
-        cam.data.ortho_scale = self.camera_zoom
-    bpy.data.window_managers[0].domeanimatic.last_camera_zoom = self.camera_zoom
-
-
 # ── Global PropertyGroup (WindowManager) ──────────────────────────────────────
 
 class DOMEANIMATICGlobalProps(bpy.types.PropertyGroup):
@@ -241,14 +220,6 @@ class DOMEANIMATICGlobalProps(bpy.types.PropertyGroup):
         name="Show Development Infos",
         default=False,
     )
-    last_camera_zoom: bpy.props.FloatProperty(
-        name="Last Camera Zoom",
-        default=3.055, min=0.01, max=1000.0,
-    )
-
-    # Collage solo state — empty string means overview mode
-    active_collage:   bpy.props.StringProperty(name="Active Collage",   default="")
-    dome_camera_name: bpy.props.StringProperty(name="Dome Camera Name", default="")
 
     active_cel: bpy.props.EnumProperty(
         name="Active Cel",
@@ -297,7 +268,6 @@ class DOMEANIMATICSceneProps(bpy.types.PropertyGroup):
     """Stored on Scene — per-scene data, saved in .blend."""
 
     synch_active:          bpy.props.BoolProperty(name="Synch Active", default=False)
-    collage_expanded:      bpy.props.BoolProperty(name="Collage Expanded", default=False)
     manual_scene_expanded: bpy.props.BoolProperty(name="Scene List Expanded", default=False)
 
     target_object:   bpy.props.PointerProperty(name="Target Object",   type=bpy.types.Object)
@@ -350,14 +320,6 @@ class DOMEANIMATICSceneProps(bpy.types.PropertyGroup):
     cel_a_mat_image: bpy.props.PointerProperty(name="Cel A Material Image", type=bpy.types.Image)
     cel_b_mat_image: bpy.props.PointerProperty(name="Cel B Material Image", type=bpy.types.Image)
 
-    # Collage camera zoom (persisted per-scene; carried over by last_camera_zoom)
-    camera_zoom: bpy.props.FloatProperty(
-        name="Camera Zoom",
-        description="Orthographic scale carried between collage scenes",
-        default=3.055, min=0.01, max=1000.0, step=10, precision=3,
-        update=_on_camera_zoom_changed,
-    )
-
     # Fade / color A
     color_a_value:      bpy.props.FloatProperty(name="Color A Value", default=0.0, min=0.0, max=1.0, precision=3)
     color_a_strip_name: bpy.props.StringProperty(name="Color A Strip", default="to_black")
@@ -394,24 +356,18 @@ def sp(scene=None) -> DOMEANIMATICSceneProps:
 # ── Register ──────────────────────────────────────────────────────────────────
 
 def register():
-    bpy.utils.register_class(DOMEANIMATICCollageProps)
     bpy.utils.register_class(DOMEANIMATICGlobalProps)
     bpy.utils.register_class(DOMEANIMATICSceneProps)
     bpy.types.WindowManager.domeanimatic = bpy.props.PointerProperty(
         type=DOMEANIMATICGlobalProps)
     bpy.types.Scene.domeanimatic = bpy.props.PointerProperty(
         type=DOMEANIMATICSceneProps)
-    bpy.types.Collection.domeanimatic = bpy.props.PointerProperty(
-        type=DOMEANIMATICCollageProps)
 
 
 def unregister():
-    if hasattr(bpy.types.Collection, 'domeanimatic'):
-        del bpy.types.Collection.domeanimatic
     if hasattr(bpy.types.WindowManager, 'domeanimatic'):
         del bpy.types.WindowManager.domeanimatic
     if hasattr(bpy.types.Scene, 'domeanimatic'):
         del bpy.types.Scene.domeanimatic
     bpy.utils.unregister_class(DOMEANIMATICSceneProps)
     bpy.utils.unregister_class(DOMEANIMATICGlobalProps)
-    bpy.utils.unregister_class(DOMEANIMATICCollageProps)

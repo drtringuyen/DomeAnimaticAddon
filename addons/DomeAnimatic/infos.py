@@ -99,7 +99,6 @@ def _make_toggle(mod_name: str, label: str) -> type:
 TOGGLE_CLASSES = [
     _make_toggle("live_texture",       "Live Texture"),
     _make_toggle("painting_cel",       "Painting Cel"),
-    _make_toggle("collage_collection", "Collage Collection"),
     _make_toggle("transition_vfx",     "Transition VFX"),
     _make_toggle("extra_tools",        "Extra Tools"),
 ]
