@@ -21,19 +21,41 @@ from ...global_scene_shared_props import gp
 
 
 # ── VSE active strip → active cel slot ────────────────────────────────────────
+# Strip clicks do not reliably push a depsgraph update, so a cheap repeating
+# timer polls the active strip as well; both paths share _check_active_strip(),
+# which is idempotent via the _last_active_strip cache.
 
 _last_active_strip = None
+_TIMER_INTERVAL    = 0.25
 
 
-@persistent
-def _vse_active_strip_watch(scene, depsgraph):
-    """Selecting a strip on a cel channel in the VSE activates that cel slot."""
+def _slot_from_strip(se, strip):
+    """Map an IMAGE strip to a cel slot. Filename pattern is authoritative
+    (cel PNGs are addon-generated), channel name second, channel number last —
+    strips occasionally get parked on foreign channels while editing."""
+    for layer in cel_store.LAYERS:
+        if f"_{layer.filename_label}_f_" in strip.name:
+            return layer.slot_id
+    try:
+        ch_name = se.channels[strip.channel].name.upper()
+    except Exception:
+        ch_name = ""
+    slot = {'CEL_BG': 'BG', 'BG': 'BG',
+            'CEL_A': 'CEL_A', 'CEL_B': 'CEL_B'}.get(ch_name)
+    if slot:
+        return slot
+    layer = cel_store.BY_CHANNEL.get(strip.channel)
+    return layer.slot_id if layer else None
+
+
+def _check_active_strip() -> None:
+    """If the Dome Animatic VSE's active strip changed to a cel image strip,
+    activate the matching cel slot (switches Image Editor + paint canvas)."""
     global _last_active_strip
-    if scene.name != "Dome Animatic":
+    scene = bpy.data.scenes.get("Dome Animatic")
+    if scene is None or scene.sequence_editor is None:
         return
-    se = scene.sequence_editor
-    if se is None:
-        return
+    se    = scene.sequence_editor
     strip = se.active_strip
     key   = (strip.name, strip.channel) if strip else None
     if key == _last_active_strip:
@@ -41,9 +63,8 @@ def _vse_active_strip_watch(scene, depsgraph):
     _last_active_strip = key
     if strip is None or strip.type != 'IMAGE':
         return
-
-    layer = cel_store.BY_CHANNEL.get(strip.channel)
-    if layer is None:
+    slot = _slot_from_strip(se, strip)
+    if slot is None:
         return
     # Only follow selection while painting on cel layers
     try:
@@ -53,8 +74,21 @@ def _vse_active_strip_watch(scene, depsgraph):
     except Exception:
         return
     g = gp()
-    if g.active_cel != layer.slot_id:
-        g.active_cel = layer.slot_id   # fires _on_active_cel_changed
+    if g.active_cel != slot:
+        g.active_cel = slot   # fires _on_active_cel_changed
+
+
+@persistent
+def _vse_active_strip_watch(scene, depsgraph):
+    _check_active_strip()
+
+
+def _vse_selection_timer():
+    try:
+        _check_active_strip()
+    except Exception:
+        pass
+    return _TIMER_INTERVAL
 
 
 class DOMEANIMATIC_OT_cel_invisible_warning(bpy.types.Operator):
@@ -117,12 +151,20 @@ def register() -> None:
         bpy.utils.register_class(cls)
     if _vse_active_strip_watch not in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.append(_vse_active_strip_watch)
+    if not bpy.app.timers.is_registered(_vse_selection_timer):
+        bpy.app.timers.register(_vse_selection_timer,
+                                first_interval=_TIMER_INTERVAL, persistent=True)
 
 
 def unregister() -> None:
     global _last_active_strip
     if _vse_active_strip_watch in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(_vse_active_strip_watch)
+    if bpy.app.timers.is_registered(_vse_selection_timer):
+        try:
+            bpy.app.timers.unregister(_vse_selection_timer)
+        except Exception:
+            pass
     _last_active_strip = None
     for cls in reversed(CLASSES):
         try:
