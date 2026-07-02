@@ -189,6 +189,12 @@ def _draw_painting_cel(self, context):
                 draw_row(col, g, slot_id)
                 col.separator(factor=0.2)
 
+            # Lasso transform — only enabled in an Image Editor (operator poll)
+            lasso_row = cel_box.row()
+            lasso_row.scale_y = 1.2
+            lasso_row.operator("domeanimatic.lasso_transform",
+                               text="Lasso Transform", icon='SELECT_SET')
+
         else:  # BAKED
             draw_baked_row(cel_box, context)
 
