@@ -56,6 +56,18 @@ DRAW_ORDER: list[CelLayer]       = sorted(LAYERS, key=lambda l: l.z_order)
 CEL_CHANNELS: set[int] = set(BY_CHANNEL.keys())   # {2, 3, 4}
 
 
+def upper_slot(slot_id: str) -> Optional[str]:
+    """Slot id of the layer directly above (z_order + 1), or None at the top."""
+    layer = BY_SLOT.get(slot_id)
+    if layer is None:
+        return None
+    z = layer.z_order + 1
+    for l in LAYERS:
+        if l.z_order == z:
+            return l.slot_id
+    return None
+
+
 # ── Image datablock helpers ───────────────────────────────────────────────────
 
 def get_or_create_cel_image(slot_id: str,
@@ -77,10 +89,11 @@ def get_or_create_cel_image(slot_id: str,
                                                 alpha=True, float_buffer=False)
         img.alpha_mode    = 'STRAIGHT'
         img.use_fake_user = True
-        if np is not None:
-            buf = np.zeros(width * height * 4, dtype=np.float32)
-            img.pixels.foreach_set(buf)
-            img.update()
+        # Transparent via the GENERATED fill, NOT a pixel write — a pixel
+        # write would set is_dirty, and paint_guard uses "is_dirty in a gap"
+        # as the user-painted signal for auto strip creation.
+        img.generated_type  = 'BLANK'
+        img.generated_color = (0.0, 0.0, 0.0, 0.0)
     return img
 
 

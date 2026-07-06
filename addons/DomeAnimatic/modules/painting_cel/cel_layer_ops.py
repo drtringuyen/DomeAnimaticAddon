@@ -29,6 +29,116 @@ def activate_slot(slot_id: str) -> None:
         gp().active_cel = slot_id
 
 
+def compute_slot_range(dome_scene, channel: int, frame: int) -> tuple[int, int]:
+    """Frame range for a new strip on `channel` at `frame`.
+    Existing strip at frame → its range; empty space → bounded by neighbours
+    and the BG/track-1 strip."""
+    existing = vse_helpers.vse_get_strip_on_channel(dome_scene, channel, frame)
+    if existing is not None:
+        return existing.frame_final_start, existing.frame_final_end
+
+    bg_strip = vse_helpers.vse_get_strip_on_channel(dome_scene, 2, frame,
+                                                     include_muted=True)
+    if bg_strip is None:
+        bg_strip = vse_helpers.vse_get_strip_on_channel(dome_scene, 1, frame,
+                                                         include_muted=True)
+    left  = vse_helpers.vse_get_strip_left_of_frame(dome_scene, channel, frame)
+    right = vse_helpers.vse_get_strip_right_of(dome_scene, channel, frame)
+
+    if bg_strip is not None:
+        bg_start, bg_end = bg_strip.frame_final_start, bg_strip.frame_final_end
+    else:
+        bg_start, bg_end = frame, frame + 100
+
+    start = max(bg_start, left.frame_final_end  if left  else bg_start)
+    end   = min(bg_end,   right.frame_final_start if right else bg_end)
+    if end <= start:
+        end = bg_end
+    return start, end
+
+
+def ensure_strip_for_slot(slot_id: str, adopt_datablock: bool = False):
+    """Make sure a strip exists on this slot's channel at the playhead.
+
+    Returns (strip, created). If no strip exists, a new PNG is written and a
+    strip is inserted spanning the empty gap.
+
+    adopt_datablock=False (lasso bake): the new PNG starts from BG/track-1
+    pixels or blank and is LOADED into the slot datablock. If a strip exists
+    but the datablock points at a different file (sync handler inactive), the
+    strip's file is loaded so a bake hits the right pixels.
+
+    adopt_datablock=True (painting on an empty frame): the new PNG is saved
+    FROM the datablock's current pixels and the datablock is re-pointed at it
+    WITHOUT a reload — in-progress brush strokes are kept and now belong to
+    the new strip instead of leaking into the previous strip's file.
+    """
+    dome_scene = bpy.data.scenes.get("Dome Animatic")
+    if dome_scene is None or not dome_scene.sequence_editor:
+        return None, False
+    channel = cel_store.BY_SLOT[slot_id].vse_channel
+    frame   = image_io.dome_frame()
+    w, h    = image_io.get_reference_size()
+
+    strip = vse_helpers.vse_get_strip_on_channel(dome_scene, channel, frame,
+                                                 include_muted=True)
+    if strip is not None:
+        path = vse_helpers.resolve_strip_image_path(strip, frame)
+        img  = cel_store.get_cel_image(slot_id)
+        if (not adopt_datablock
+                and path and os.path.exists(path) and img is not None
+                and os.path.normpath(bpy.path.abspath(img.filepath_raw or ""))
+                    != os.path.normpath(path)):
+            image_io.load_abs_into_slot(slot_id, path, w, h)
+            try:
+                from ..live_texture import vse_sync as _vse_sync
+                _vse_sync._s.last_path[channel] = path
+            except Exception:
+                pass
+        return strip, False
+
+    start, end = compute_slot_range(dome_scene, channel, frame)
+    folder   = image_io.ensure_cel_folder()
+    filename = image_io.cel_filename(slot_id, frame)
+    abs_path = os.path.join(folder, filename)
+
+    img   = cel_store.get_cel_image(slot_id)
+    adopt = adopt_datablock and img is not None and img.size[0] > 0
+
+    track1_strip = vse_helpers.vse_get_strip_on_channel(dome_scene, 1, frame,
+                                                         include_muted=True)
+    if adopt:
+        image_io.save_datablock_to_png(img, abs_path, w, h)
+    elif slot_id == 'BG' and track1_strip is not None:
+        image_io.copy_track1_to_png(track1_strip, frame, abs_path, w, h)
+    else:
+        image_io.create_blank_png(abs_path, w, h)
+
+    strip = vse_helpers.vse_insert_image_strip(dome_scene, channel, abs_path,
+                                               start, end)
+    if adopt:
+        # The PNG was just saved FROM the datablock, so loading it back is
+        # lossless: the user's strokes stay, the image flips from the gap's
+        # GENERATED blank to a FILE properly backed by the new strip, and
+        # is_dirty resets (the strokes are on disk).
+        image_io.load_abs_into_slot(slot_id, abs_path, w, h)
+        try:
+            setattr(gp(), f"{slot_id.lower()}_filepath", abs_path)
+        except Exception:
+            pass
+    else:
+        image_io.load_slot_from_vse(slot_id, w, h)
+    try:
+        from ..live_texture import vse_sync as _vse_sync
+        _vse_sync._s.last_path[channel] = abs_path
+    except Exception:
+        pass
+    if not adopt:
+        _blank_other_empty_channels(dome_scene, channel, frame)
+    vse_helpers.tag_all_image_editors_redraw()
+    return strip, True
+
+
 def _blank_other_empty_channels(dome_scene, inserted_channel: int, frame: int) -> None:
     """After inserting a strip, blank every cel channel that has no strip at this frame.
 
@@ -115,10 +225,20 @@ class DOMEANIMATIC_OT_cel_set_active(bpy.types.Operator):
         # Reload/scale to real res BEFORE entering paint mode so the GPU texture
         # is already up-to-date when Texture Paint binds it. Doing this after
         # entering paint causes the first stroke to paint to a stale GPU buffer.
+        # Only reload when a strip exists at the playhead — in a gap the
+        # datablock's filepath still points at the LAST strip's file, and
+        # reloading it would put the previous drawing back on an empty frame.
         rw, rh = image_io.get_reference_size()
         cel_img = cel_store.get_or_create_cel_image(self.slot)
+        dome_scene = bpy.data.scenes.get("Dome Animatic")
+        channel    = cel_store.BY_SLOT[self.slot].vse_channel
+        frame      = image_io.dome_frame()
+        has_strip  = (dome_scene is not None and
+                      vse_helpers.vse_get_strip_on_channel(
+                          dome_scene, channel, frame,
+                          include_muted=True) is not None)
         raw = cel_img.filepath_raw
-        if raw and os.path.exists(bpy.path.abspath(raw)):
+        if has_strip and raw and os.path.exists(bpy.path.abspath(raw)):
             cel_img.reload()
         elif cel_img.size[0] != rw or cel_img.size[1] != rh:
             cel_img.scale(rw, rh)
@@ -287,28 +407,7 @@ class DOMEANIMATIC_OT_cel_insert_full(bpy.types.Operator):
     slot: bpy.props.StringProperty()
 
     def _compute_range(self, dome_scene, channel: int, frame: int):
-        existing = vse_helpers.vse_get_strip_on_channel(dome_scene, channel, frame)
-        if existing is not None:
-            return existing.frame_final_start, existing.frame_final_end
-
-        bg_strip = vse_helpers.vse_get_strip_on_channel(dome_scene, 2, frame,
-                                                         include_muted=True)
-        if bg_strip is None:
-            bg_strip = vse_helpers.vse_get_strip_on_channel(dome_scene, 1, frame,
-                                                             include_muted=True)
-        left  = vse_helpers.vse_get_strip_left_of_frame(dome_scene, channel, frame)
-        right = vse_helpers.vse_get_strip_right_of(dome_scene, channel, frame)
-
-        if bg_strip is not None:
-            bg_start, bg_end = bg_strip.frame_final_start, bg_strip.frame_final_end
-        else:
-            bg_start, bg_end = frame, frame + 100
-
-        start = max(bg_start, left.frame_final_end  if left  else bg_start)
-        end   = min(bg_end,   right.frame_final_start if right else bg_end)
-        if end <= start:
-            end = bg_end
-        return start, end
+        return compute_slot_range(dome_scene, channel, frame)
 
     def invoke(self, context, event):
         dome_scene = bpy.data.scenes.get("Dome Animatic")
@@ -667,6 +766,171 @@ class DOMEANIMATIC_OT_cel_purge_unused(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# ── Toon Boom-style drawing duplication ───────────────────────────────────────
+# Unlike VSE Shift+D / strip cutting (which keep pointing at the SAME image
+# file), these save a brand-new PNG so editing the duplicate never touches
+# the original drawing.
+
+def _save_dirty_source(img) -> None:
+    """Persist unsaved strokes on the source before duplicating from it."""
+    if img is not None and img.is_dirty and img.filepath_raw:
+        try:
+            img.save()
+        except Exception:
+            pass
+
+
+class DOMEANIMATIC_OT_cel_duplicate_up(bpy.types.Operator):
+    """Duplicate the active cel's current drawing to the layer above as a new
+    independent file (Toon Boom-style: the copy is fully editable and never
+    shares pixels with the original)"""
+    bl_idname  = "domeanimatic.cel_duplicate_up"
+    bl_label   = "Duplicate Up"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def invoke(self, context, event):
+        slot  = gp(context).active_cel
+        upper = cel_store.upper_slot(slot)
+        if upper is None:
+            self.report({'WARNING'}, f"[{slot}] No layer above.")
+            return {'CANCELLED'}
+        dome_scene = bpy.data.scenes.get("Dome Animatic")
+        if dome_scene is None:
+            self.report({'ERROR'}, "Dome Animatic scene not found.")
+            return {'CANCELLED'}
+        frame    = image_io.dome_frame()
+        up_ch    = cel_store.BY_SLOT[upper].vse_channel
+        existing = vse_helpers.vse_get_strip_on_channel(dome_scene, up_ch, frame,
+                                                        include_muted=True)
+        if existing is not None:
+            self._existing_name = existing.name
+            return context.window_manager.invoke_props_dialog(self, width=380)
+        return self.execute(context)
+
+    def draw(self, context):
+        col = self.layout.column(align=True)
+        col.label(text=f"Strip '{getattr(self, '_existing_name', '?')}' already "
+                       f"exists on the layer above.", icon='ERROR')
+        col.separator()
+        col.label(text="Replace it with the duplicated drawing?")
+
+    def execute(self, context):
+        slot  = gp(context).active_cel
+        upper = cel_store.upper_slot(slot)
+        if upper is None:
+            self.report({'WARNING'}, f"[{slot}] No layer above.")
+            return {'CANCELLED'}
+        dome_scene = bpy.data.scenes.get("Dome Animatic")
+        if dome_scene is None or not dome_scene.sequence_editor:
+            self.report({'ERROR'}, "Dome Animatic scene / VSE not found.")
+            return {'CANCELLED'}
+
+        src_img = cel_store.get_cel_image(slot)
+        if src_img is None or src_img.size[0] == 0:
+            self.report({'WARNING'}, f"[{slot}] Nothing to duplicate.")
+            return {'CANCELLED'}
+        _save_dirty_source(src_img)
+
+        frame  = image_io.dome_frame()
+        w, h   = image_io.get_reference_size()
+        src_ch = cel_store.BY_SLOT[slot].vse_channel
+        up_ch  = cel_store.BY_SLOT[upper].vse_channel
+
+        # Range: mirror the source strip if present, else the empty-gap rules
+        src_strip = vse_helpers.vse_get_strip_on_channel(dome_scene, src_ch, frame,
+                                                         include_muted=True)
+        if src_strip is not None:
+            start, end = src_strip.frame_final_start, src_strip.frame_final_end
+        else:
+            start, end = compute_slot_range(dome_scene, up_ch, frame)
+
+        folder   = image_io.ensure_cel_folder()
+        abs_path = os.path.join(folder, image_io.cel_filename(upper, frame))
+        image_io.save_datablock_to_png(src_img, abs_path, w, h)
+
+        existing = vse_helpers.vse_get_strip_on_channel(dome_scene, up_ch, frame,
+                                                        include_muted=True)
+        if existing is not None:
+            dome_scene.sequence_editor.strips.remove(existing)
+
+        vse_helpers.vse_insert_image_strip(dome_scene, up_ch, abs_path, start, end)
+        image_io.load_slot_from_vse(upper, w, h)
+        try:
+            from ..live_texture import vse_sync as _vse_sync
+            _vse_sync._s.last_path[up_ch] = abs_path
+        except Exception:
+            pass
+        activate_slot(upper)
+        vse_helpers.tag_all_image_editors_redraw()
+        self.report({'INFO'},
+                    f"[{slot} -> {upper}] Duplicated as {os.path.basename(abs_path)}")
+        return {'FINISHED'}
+
+
+class DOMEANIMATIC_OT_cel_duplicate_next(bpy.types.Operator):
+    """Duplicate the active cel's current drawing into the next slot on the
+    same VSE channel as a new independent file, then jump the playhead there
+    (Toon Boom-style duplicate drawing)"""
+    bl_idname  = "domeanimatic.cel_duplicate_next"
+    bl_label   = "Duplicate Next"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        slot       = gp(context).active_cel
+        dome_scene = bpy.data.scenes.get("Dome Animatic")
+        if dome_scene is None or not dome_scene.sequence_editor:
+            self.report({'ERROR'}, "Dome Animatic scene / VSE not found.")
+            return {'CANCELLED'}
+
+        channel = cel_store.BY_SLOT[slot].vse_channel
+        frame   = image_io.dome_frame()
+        current = vse_helpers.vse_get_strip_on_channel(dome_scene, channel, frame,
+                                                       include_muted=True)
+        if current is None:
+            self.report({'WARNING'}, f"[{slot}] No strip at playhead to duplicate.")
+            return {'CANCELLED'}
+
+        src_img = cel_store.get_cel_image(slot)
+        if src_img is None or src_img.size[0] == 0:
+            self.report({'WARNING'}, f"[{slot}] Nothing to duplicate.")
+            return {'CANCELLED'}
+        _save_dirty_source(src_img)
+
+        start = int(current.frame_final_end)
+        dur   = int(current.frame_final_end - current.frame_final_start)
+        end   = start + max(dur, 1)
+        right = vse_helpers.vse_get_strip_right_of(dome_scene, channel,
+                                                   current.frame_final_start)
+        if right is not None and right.frame_final_start < end:
+            end = int(right.frame_final_start)
+        if end <= start:
+            self.report({'WARNING'},
+                        f"[{slot}] No room after this strip on channel {channel}.")
+            return {'CANCELLED'}
+
+        w, h     = image_io.get_reference_size()
+        folder   = image_io.ensure_cel_folder()
+        abs_path = os.path.join(folder, image_io.cel_filename(slot, start))
+        image_io.save_datablock_to_png(src_img, abs_path, w, h)
+
+        vse_helpers.vse_insert_image_strip(dome_scene, channel, abs_path, start, end)
+
+        # Jump the playhead onto the duplicate and load it for editing
+        dome_scene.frame_set(start)
+        image_io.load_abs_into_slot(slot, abs_path, w, h)
+        try:
+            from ..live_texture import vse_sync as _vse_sync
+            _vse_sync._s.last_path[channel] = abs_path
+        except Exception:
+            pass
+        activate_slot(slot)
+        _blank_other_empty_channels(dome_scene, channel, start)
+        vse_helpers.tag_all_image_editors_redraw()
+        self.report({'INFO'},
+                    f"[{slot}] Duplicated to {start}->{end}: {os.path.basename(abs_path)}")
+        return {'FINISHED'}
+
+
 # ── Register ──────────────────────────────────────────────────────────────────
 
 CLASSES = [
@@ -681,6 +945,8 @@ CLASSES = [
     DOMEANIMATIC_OT_cel_clear,
     DOMEANIMATIC_OT_cel_save,
     DOMEANIMATIC_OT_cel_purge_unused,
+    DOMEANIMATIC_OT_cel_duplicate_up,
+    DOMEANIMATIC_OT_cel_duplicate_next,
 ]
 
 

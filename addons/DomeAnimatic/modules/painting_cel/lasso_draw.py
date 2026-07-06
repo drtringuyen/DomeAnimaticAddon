@@ -168,7 +168,7 @@ def _draw_composite(op, region, x0, y0, x1, y1, to_region) -> None:
     indices = [(0, 1, 2), (0, 2, 3)]
 
     g          = gp()
-    float_slot = op._slot if op._dest_layer == 'ACTIVE' else op._upper_slot()
+    float_slot = g.active_cel   # dest follows the active layer (retargetable)
 
     try:
         gpu.state.scissor_set(sc_x, sc_y, sc_w, sc_h)
@@ -188,7 +188,10 @@ def _draw_composite(op, region, x0, y0, x1, y1, to_region) -> None:
             visible  = getattr(g, f"{slot_key}_visible", True)
             opacity  = float(getattr(g, f"{slot_key}_opacity", 1.0))
             if visible:
-                if layer.slot_id == op._slot and op._source_mode == 'CUT':
+                if (layer.slot_id == getattr(op, '_src_slot', None)
+                        and op._source_mode == 'CUT'
+                        and getattr(op, '_hole_live', False)
+                        and op._hole_tex is not None):
                     tex = op._hole_tex
                 else:
                     img = cel_store.get_cel_image(layer.slot_id)
@@ -276,9 +279,10 @@ def _draw_outline(op, region, to_region) -> None:
 
 _STATUS_TEXT = {
     'DRAW':       "Lasso: click points, Enter to close, Esc cancel",
-    'FLOAT_IDLE': "Shift+D duplicate | Ctrl+J dup->above | Ctrl+X cut->above | "
-                  "X delete | G/R/S | Enter apply | Esc",
-    'GRAB':       "Grab: move mouse | LMB/Enter confirm | RMB/Esc cancel",
+    'FLOAT_IDLE': "Drag/G move | R/S | Shift+D stamp | Ctrl+J/X dup/cut->above | "
+                  "Ctrl+C/V copy/paste | X del | scrub timeline or switch layer, "
+                  "then Enter/click-outside apply | Esc",
+    'GRAB':       "Grab: move mouse | release/LMB/Enter confirm | RMB/Esc cancel",
     'ROTATE':     "Rotate around selection center | LMB/Enter confirm | RMB/Esc cancel",
     'SCALE':      "Scale around selection center | LMB/Enter confirm | RMB/Esc cancel",
 }
@@ -288,9 +292,13 @@ def _draw_status(op, region) -> None:
     if blf is None:
         return
     text = _STATUS_TEXT.get(op._state, "")
-    if op._dest_layer == 'UPPER':
-        mode = "cut" if op._source_mode == 'CUT' else "dup"
-        text += f"   [{mode} -> {op._upper_slot()}]"
+    if op._state != 'DRAW':
+        dest  = gp().active_cel
+        dome  = bpy.data.scenes.get("Dome Animatic")
+        frame = dome.frame_current if dome else 0
+        mode  = ("cut" if op._source_mode == 'CUT'
+                 and getattr(op, '_hole_live', False) else "copy")
+        text += f"   [{mode} {getattr(op, '_src_slot', op._slot)} -> {dest} @ f{frame}]"
     y = region.height - BANNER_H
     gpu.state.blend_set('ALPHA')
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')

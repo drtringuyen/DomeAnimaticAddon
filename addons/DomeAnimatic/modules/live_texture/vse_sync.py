@@ -76,16 +76,25 @@ def _load_path_into_image(datablock, abs_path: str) -> None:
 
 
 def _blank_cel_datablock(slot_id: str) -> None:
-    """Zero-fill a cel datablock so it shows transparent when no strip is present."""
+    """Blank a cel datablock so it shows transparent when no strip is present.
+
+    Switches to a GENERATED transparent image instead of zero-filling pixels:
+    no pixel write means is_dirty stays False, so a later is_dirty=True in a
+    gap can only mean the user painted (paint_guard._check_gap_paint uses this
+    to auto-create a strip). Clearing the filepath also guarantees a save can
+    never land in the PREVIOUS strip's file."""
     try:
-        import numpy as np
         cel_img = cel_store.get_or_create_cel_image(slot_id)
         if cel_img.size[0] == 0:
             return
         w, h = cel_img.size
-        buf  = np.zeros(w * h * 4, dtype=np.float32)
-        cel_img.pixels.foreach_set(buf)
-        cel_img.update()
+        cel_img.filepath         = ""
+        cel_img.filepath_raw     = ""
+        cel_img.source           = 'GENERATED'
+        cel_img.generated_type   = 'BLANK'
+        cel_img.generated_color  = (0.0, 0.0, 0.0, 0.0)
+        cel_img.generated_width  = w
+        cel_img.generated_height = h
     except Exception:
         pass
 
@@ -214,9 +223,15 @@ def scene_switch_handler(scene, depsgraph=None):
 
         if _s._was_playing and not is_playing:
             rw, rh = _reference_size()
+            by_name = {l.datablock_name: l.vse_channel for l in cel_store.LAYERS}
             for img in _all_datablocks():
+                # Cel channel currently in a gap (last_path == ""): keep it
+                # blank — its filepath still points at the LAST strip's file
+                # and reloading would resurrect the previous drawing.
+                ch = by_name.get(img.name)
+                in_gap = ch is not None and _s.last_path[ch] == ""
                 raw = img.filepath_raw
-                if raw and os.path.exists(bpy.path.abspath(raw)):
+                if not in_gap and raw and os.path.exists(bpy.path.abspath(raw)):
                     img.reload()
                 elif img.size[0] != rw or img.size[1] != rh:
                     img.scale(rw, rh)

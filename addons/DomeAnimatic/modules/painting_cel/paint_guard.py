@@ -78,14 +78,77 @@ def _check_active_strip() -> None:
         g.active_cel = slot   # fires _on_active_cel_changed
 
 
+# ── Paint on an empty frame → auto-create the VSE strip ──────────────────────
+# Photoshop/Toon Boom behavior: drawing on an empty slot creates the cel.
+#
+# The signal: when a cel channel has no strip at the playhead, its datablock
+# is a clean GENERATED transparent image (vse_sync._blank_cel_datablock — no
+# pixel write, so is_dirty is False). Brush strokes write pixels, so
+# "is_dirty while in a gap" can ONLY mean the user painted there. The new
+# strip then adopts the datablock's pixels (ensure_strip_for_slot with
+# adopt_datablock=True) so the triggering stroke is kept.
+#
+# A FILE-source datablock in a gap is stale content from before an addon
+# reload / file open (the blank never ran) — it gets normalized to the clean
+# blank so the previous strip's drawing neither shows nor gets adopted.
+
+def _check_gap_paint() -> None:
+    scene = bpy.data.scenes.get("Dome Animatic")
+    if scene is None or scene.sequence_editor is None:
+        return
+    try:
+        ctx_scene = bpy.context.scene or scene
+        if ctx_scene.domeanimatic.synch_mode != 'CEL_LAYERS':
+            return
+    except Exception:
+        return
+    try:
+        from ..live_texture import vse_sync
+    except Exception:
+        return
+
+    frame       = scene.frame_current
+    active_slot = gp().active_cel
+
+    for layer in cel_store.LAYERS:
+        strip = vse_helpers.vse_get_strip_on_channel(scene, layer.vse_channel,
+                                                     frame, include_muted=True)
+        if strip is not None:
+            continue
+        img = cel_store.get_cel_image(layer.slot_id)
+        if img is None or img.size[0] == 0:
+            continue
+
+        if img.source != 'GENERATED':
+            # Stale pixels of a previous strip on an empty frame — blank it.
+            vse_sync._blank_cel_datablock(layer.slot_id)
+            vse_sync._s.last_path[layer.vse_channel] = ""
+            vse_helpers.tag_all_image_editors_redraw()
+            continue
+
+        if layer.slot_id == active_slot and img.is_dirty:
+            from . import cel_layer_ops
+            new_strip, created = cel_layer_ops.ensure_strip_for_slot(
+                layer.slot_id, adopt_datablock=True)
+            if created and new_strip is not None:
+                vse_helpers.log(
+                    f"[PaintGuard] {layer.slot_id}: painted on empty frame "
+                    f"{frame} — auto-created strip '{new_strip.name}'")
+
+
 @persistent
 def _vse_active_strip_watch(scene, depsgraph):
     _check_active_strip()
+    try:
+        _check_gap_paint()
+    except Exception:
+        pass
 
 
 def _vse_selection_timer():
     try:
         _check_active_strip()
+        _check_gap_paint()
     except Exception:
         pass
     return _TIMER_INTERVAL

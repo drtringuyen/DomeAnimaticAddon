@@ -126,16 +126,38 @@ carried through the affine so the pivot tracks the piece.
 
 | State | Handler | Key actions |
 |---|---|---|
-| `DRAW` | `_modal_draw` | LMB add point · click-near-P0 / double-click / Enter close · RMB undo point (or cancel if empty) · Esc cancel |
-| `FLOAT_IDLE` | `_modal_idle` | `G`/`R`/`S` enter sub-mode · `Shift+D` stamp-duplicate · `Ctrl+J` dup→above · `Ctrl+X` cut→above · `X` delete · Enter apply · Esc cancel |
-| `GRAB`/`ROTATE`/`SCALE` | `_modal_submode` | mouse move updates the affine · LMB/Enter accept · RMB/Esc revert to the pre-submode snapshot (`_snap`) |
+| `DRAW` | `_modal_draw` | LMB add point · click-near-P0 / double-click / Enter close · RMB undo point (or cancel if empty) · Esc cancel · clicks outside the region pass through |
+| `FLOAT_IDLE` | `_modal_idle` | drag inside selection = move · click outside = commit+finish · `G`/`R`/`S` sub-modes · `Shift+D` stamp-duplicate · `Ctrl+J`/`Ctrl+X` dup/cut→above (switches active layer) · `Ctrl+C` copy to clipboard · `Ctrl+V` commit + paste clipboard · `L` commit + new lasso · `X` delete · Enter apply · Esc drop · **everything else passes through** |
+| `GRAB`/`ROTATE`/`SCALE` | `_modal_submode` | mouse move updates the affine · release (drag-grab) / LMB / Enter accept · RMB/Esc revert to the pre-submode snapshot (`_snap`) |
 
 `MIDDLEMOUSE` / wheel always `PASS_THROUGH` so pan/zoom stay alive.
 
-**Destination & source modes** (set from FLOAT_IDLE, shown in the banner):
-- `_dest_layer` ∈ {`ACTIVE`, `UPPER`} — bake into the active cel or the layer above.
-- `_source_mode` ∈ {`CUT`, `COPY`} — whether the active cel gets the hole punched.
-  `Shift+D` bakes once then flips to `COPY` so repeated stamps don't re-cut.
+**Photoshop / Toon Boom retargeting (2026-07-06):** in `FLOAT_IDLE` unhandled
+events (and all hotkeys while the mouse is outside the invoking region) are
+`PASS_THROUGH`, so the timeline, VSE, and layer panel stay usable while the
+selection floats. `_sync_context()` watches for frame/layer changes:
+
+- Dest is always **the active cel at the current frame** — `_bake_current`
+  calls `cel_layer_ops.ensure_strip_for_slot()` which auto-creates the PNG +
+  VSE strip when the target slot has none at the playhead (and saves the
+  freshly created file right after the bake).
+- `_source_mode` ∈ {`CUT`, `COPY`} with `_hole_live`: the CUT hole stays
+  virtual (GPU-only, Esc restores) while `_src_is_intact()` — i.e. the source
+  slot's datablock still shows the source strip file. Once the user scrubs
+  away, `_commit_cut_to_file()` burns the hole into the source PNG and the
+  float becomes a pure COPY. `Shift+D` bakes once then flips to `COPY` so
+  repeated stamps don't re-cut.
+- **Clipboard:** module-level `_CLIPBOARD` (patch/mask/points/affine) survives
+  across runs. `Ctrl+C` snapshots the float; `Ctrl+V` in the Image Editor
+  keymap invokes the operator with `paste=True`, starting directly in
+  `FLOAT_IDLE` with the clipboard content (paste-in-place).
+
+**Related, in `cel_layer_ops.py`:** `DOMEANIMATIC_OT_cel_duplicate_up` /
+`_next` — Toon Boom-style drawing duplication (buttons in the Painting Cel
+panel). Both save a **new** PNG from the active slot's datablock so the copy
+never shares pixels with the original strip: *Up* inserts it on the layer
+above (same range), *Next* inserts it right after the current strip on the
+same channel and jumps the playhead there.
 
 ---
 
@@ -165,7 +187,9 @@ independent of where you dragged it.
 | Fix compositing / edge quality of the bake | `lasso_raster.py` · `composite_float` |
 | Change selection rasterization (e.g. antialiasing) | `lasso_raster.py` · `rasterize_polygon` (+ mask consumers) |
 | Add a new floating operation (e.g. flip) | new `_enter_submode` branch + `_modal_submode` case; affine only, no new pixel code |
-| Support a different layer target | `_upper_slot`, `_set_dest_upper`, `_bake_current` |
+| Change layer retargeting / auto strip creation | `_dup_to_upper`, `_bake_current`, `cel_layer_ops.ensure_strip_for_slot` |
+| Change cut-commit rules on scrub-away | `_sync_context`, `_src_is_intact`, `_commit_cut_to_file` |
+| Change clipboard behavior | `_CLIPBOARD`, `_copy_to_clipboard`, `_adopt_clipboard`, `paste` property + Ctrl+V keymap |
 
 ---
 
@@ -187,4 +211,4 @@ independent of where you dragged it.
 
 ---
 
-*Last updated: 2026-07-02 (draw/raster/operator split).*
+*Last updated: 2026-07-06 (float retargeting + clipboard + duplicate ops).*

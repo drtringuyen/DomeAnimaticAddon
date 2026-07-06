@@ -216,6 +216,29 @@ def copy_image_to_png(src_abs_path: str, dst_abs_path: str,
     bpy.data.images.remove(out)
 
 
+def save_datablock_to_png(img: bpy.types.Image, abs_path: str,
+                          w: int, h: int) -> None:
+    """Save a COPY of a datablock's current pixels (including unsaved strokes)
+    to abs_path without touching the datablock's own filepath."""
+    if np is None or img.size[0] == 0:
+        create_blank_png(abs_path, w, h)
+        return
+    sw, sh = img.size
+    buf = np.empty(sw * sh * 4, dtype=np.float32)
+    img.pixels.foreach_get(buf)
+    out = bpy.data.images.new("__cel_dup_tmp__", width=sw, height=sh,
+                               alpha=True, float_buffer=False)
+    out.alpha_mode = 'STRAIGHT'
+    out.pixels.foreach_set(buf)
+    out.update()
+    if (sw, sh) != (w, h):
+        out.scale(w, h)
+    out.filepath_raw = abs_path
+    out.file_format  = 'PNG'
+    out.save()
+    bpy.data.images.remove(out)
+
+
 def load_abs_into_slot(slot_id: str, abs_path: str, w: int, h: int) -> None:
     cel_img = cel_store.get_or_create_cel_image(slot_id, w, h)
     if cel_img.packed_file:

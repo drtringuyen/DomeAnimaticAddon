@@ -195,6 +195,26 @@ def _draw_painting_cel(self, context):
             lasso_row.operator("domeanimatic.lasso_transform",
                                text="Lasso Transform", icon='SELECT_SET')
 
+            # Toon Boom-style drawing duplication: always saves a NEW png so
+            # the copy never shares pixels with the original strip.
+            dup_scene     = bpy.data.scenes.get("Dome Animatic")
+            dup_frame     = image_io.dome_frame()
+            active_layer  = cel_store.BY_SLOT.get(g.active_cel)
+            active_strip  = (dup_scene is not None and active_layer is not None and
+                             vse_helpers.vse_get_strip_on_channel(
+                                 dup_scene, active_layer.vse_channel, dup_frame,
+                                 include_muted=True) is not None)
+            dup_row = cel_box.row(align=True)
+            dup_row.scale_y = 1.2
+            up_sub = dup_row.row(align=True)
+            up_sub.enabled = active_strip and cel_store.upper_slot(g.active_cel) is not None
+            up_sub.operator("domeanimatic.cel_duplicate_up",
+                            text="Duplicate Up", icon='TRIA_UP_BAR')
+            next_sub = dup_row.row(align=True)
+            next_sub.enabled = active_strip
+            next_sub.operator("domeanimatic.cel_duplicate_next",
+                              text="Duplicate Next", icon='NEXT_KEYFRAME')
+
         else:  # BAKED
             draw_baked_row(cel_box, context)
 

@@ -85,7 +85,7 @@ def _run():
 
     # ── 2. Simulate gap transition: blank fires, then last_path set to "" ────
     vse_sync._s.last_path[_CEL_A_CH] = abs_path  # was on this strip
-    _blank_cel_datablock('CEL_A')               # pixels → zeros, is_dirty → True
+    _blank_cel_datablock('CEL_A')               # → GENERATED transparent, filepath cleared
     vse_sync._s.last_path[_CEL_A_CH] = ""       # handler sets this after blank
 
     filepath_after_blank = cel_img.filepath_raw
