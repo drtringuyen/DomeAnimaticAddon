@@ -172,8 +172,12 @@ def live_texture_sync_handler(scene, depsgraph=None):
         return
 
     if mode == 'CEL_LAYERS':
+        # Single walk of the (large) strip list for all three cel channels —
+        # this handler fires on EVERY frame during playback/scrubbing.
+        strips = vse_helpers.vse_get_strips_on_channels(
+            dome_scene, cel_store.CEL_CHANNELS, frame, include_muted=True)
         for ch, layer in cel_store.BY_CHANNEL.items():
-            strip = vse_helpers.vse_get_strip_on_channel(dome_scene, ch, frame, include_muted=True)
+            strip = strips.get(ch)
             if not strip:
                 if _s.last_path[ch] != "":
                     if not is_playing and cel_auto_save:

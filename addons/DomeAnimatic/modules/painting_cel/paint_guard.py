@@ -13,6 +13,8 @@ cel slot becomes active (which switches the Image Editor / paint canvas via
 _on_active_cel_changed).
 """
 
+import time
+
 import bpy
 from bpy.app.handlers import persistent
 
@@ -91,8 +93,26 @@ def _check_active_strip() -> None:
 # A FILE-source datablock in a gap is stale content from before an addon
 # reload / file open (the blank never ran) — it gets normalized to the clean
 # blank so the previous strip's drawing neither shows nor gets adopted.
+#
+# PERFORMANCE (2026-07-07): the strip list is large (~470 strips), so the
+# 3-channel scan is cached per (frame) with a short TTL — the 0.25 s timer and
+# depsgraph fires between rescans cost only a few RNA reads. Strip creation
+# (PNG save + reload) is deferred: immediate on a depsgraph fire (= a stroke
+# just ended) but debounced on timer ticks, so it never lands mid-stroke.
 
-def _check_gap_paint() -> None:
+_GAP_SCAN_TTL   = 0.5   # s — rescan strips at most twice per second
+_ADOPT_DEBOUNCE = 1.0   # s — timer path waits this long after first dirty
+
+_gap_cache = {"frame": None, "scan_t": 0.0, "gap_layers": ()}
+_gap_pending = {"slot": None, "t": 0.0}
+
+
+def _invalidate_gap_cache() -> None:
+    _gap_cache["frame"] = None
+    _gap_pending["slot"] = None
+
+
+def _check_gap_paint(from_depsgraph: bool = False) -> None:
     scene = bpy.data.scenes.get("Dome Animatic")
     if scene is None or scene.sequence_editor is None:
         return
@@ -107,40 +127,70 @@ def _check_gap_paint() -> None:
     except Exception:
         return
 
-    frame       = scene.frame_current
+    frame = scene.frame_current
+    now   = time.monotonic()
+
+    # ── Rescan (one pass, all 3 channels) only on frame change / TTL expiry ──
+    if _gap_cache["frame"] != frame or now - _gap_cache["scan_t"] > _GAP_SCAN_TTL:
+        strips = vse_helpers.vse_get_strips_on_channels(
+            scene, cel_store.CEL_CHANNELS, frame, include_muted=True)
+        gap_layers = tuple(l for l in cel_store.LAYERS
+                           if strips.get(l.vse_channel) is None)
+        _gap_cache["frame"]      = frame
+        _gap_cache["scan_t"]     = now
+        _gap_cache["gap_layers"] = gap_layers
+
+        for layer in gap_layers:
+            img = cel_store.get_cel_image(layer.slot_id)
+            if (img is not None and img.size[0]
+                    and img.source != 'GENERATED'):
+                # Stale pixels of a previous strip on an empty frame — blank.
+                vse_sync._blank_cel_datablock(layer.slot_id)
+                vse_sync._s.last_path[layer.vse_channel] = ""
+                vse_helpers.tag_all_image_editors_redraw()
+
+    gap_layers = _gap_cache["gap_layers"]
+    if not gap_layers:
+        return
+
     active_slot = gp().active_cel
+    layer = next((l for l in gap_layers if l.slot_id == active_slot), None)
+    if layer is None:
+        _gap_pending["slot"] = None
+        return
+    img = cel_store.get_cel_image(active_slot)
+    if (img is None or img.size[0] == 0
+            or img.source != 'GENERATED' or not img.is_dirty):
+        _gap_pending["slot"] = None
+        return
 
-    for layer in cel_store.LAYERS:
-        strip = vse_helpers.vse_get_strip_on_channel(scene, layer.vse_channel,
-                                                     frame, include_muted=True)
-        if strip is not None:
-            continue
-        img = cel_store.get_cel_image(layer.slot_id)
-        if img is None or img.size[0] == 0:
-            continue
+    # User painted on an empty frame. Create the strip now if a stroke just
+    # ended (depsgraph fire) or the dirty state has settled (timer debounce) —
+    # never do the PNG save + reload in the middle of a stroke.
+    if _gap_pending["slot"] != active_slot:
+        _gap_pending["slot"] = active_slot
+        _gap_pending["t"]    = now
+        if not from_depsgraph:
+            return
+    elif not from_depsgraph and now - _gap_pending["t"] < _ADOPT_DEBOUNCE:
+        return
 
-        if img.source != 'GENERATED':
-            # Stale pixels of a previous strip on an empty frame — blank it.
-            vse_sync._blank_cel_datablock(layer.slot_id)
-            vse_sync._s.last_path[layer.vse_channel] = ""
-            vse_helpers.tag_all_image_editors_redraw()
-            continue
-
-        if layer.slot_id == active_slot and img.is_dirty:
-            from . import cel_layer_ops
-            new_strip, created = cel_layer_ops.ensure_strip_for_slot(
-                layer.slot_id, adopt_datablock=True)
-            if created and new_strip is not None:
-                vse_helpers.log(
-                    f"[PaintGuard] {layer.slot_id}: painted on empty frame "
-                    f"{frame} — auto-created strip '{new_strip.name}'")
+    _gap_pending["slot"] = None
+    from . import cel_layer_ops
+    new_strip, created = cel_layer_ops.ensure_strip_for_slot(
+        active_slot, adopt_datablock=True)
+    _invalidate_gap_cache()
+    if created and new_strip is not None:
+        vse_helpers.log(
+            f"[PaintGuard] {active_slot}: painted on empty frame "
+            f"{frame} — auto-created strip '{new_strip.name}'")
 
 
 @persistent
 def _vse_active_strip_watch(scene, depsgraph):
     _check_active_strip()
     try:
-        _check_gap_paint()
+        _check_gap_paint(from_depsgraph=True)
     except Exception:
         pass
 
@@ -221,6 +271,7 @@ def register() -> None:
 
 def unregister() -> None:
     global _last_active_strip
+    _invalidate_gap_cache()
     if _vse_active_strip_watch in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(_vse_active_strip_watch)
     if bpy.app.timers.is_registered(_vse_selection_timer):

@@ -24,6 +24,13 @@ _SHADER      = None
 _SHADER_KIND = None
 _DIAG_DONE   = False
 
+# Cached per-redraw resources (built once, reused every draw — the overlay
+# runs on every Image Editor redraw, so nothing should be re-created here).
+_BD_SHADER   = None   # UNIFORM_COLOR shader for the opaque backdrop
+_UNIT_IMG    = None   # unit-quad batch for the image shader (pos + texCoord)
+_UNIT_COLOR  = None   # unit-quad batch for the backdrop shader (pos only)
+_CEL_NAMES   = None   # frozenset of cel datablock names
+
 
 def _get_shader():
     global _SHADER, _SHADER_KIND
@@ -41,6 +48,41 @@ def _get_shader():
     return None, None
 
 
+_UNIT_VERTS   = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+_UNIT_INDICES = [(0, 1, 2), (0, 2, 3)]
+
+
+def _get_bd_shader():
+    global _BD_SHADER
+    if _BD_SHADER is None:
+        _BD_SHADER = gpu.shader.from_builtin('UNIFORM_COLOR')
+    return _BD_SHADER
+
+
+def _get_unit_img_batch(shader):
+    global _UNIT_IMG
+    if _UNIT_IMG is None:
+        _UNIT_IMG = batch_for_shader(shader, 'TRIS',
+                                     {"pos": _UNIT_VERTS, "texCoord": _UNIT_VERTS},
+                                     indices=_UNIT_INDICES)
+    return _UNIT_IMG
+
+
+def _get_unit_color_batch(shader):
+    global _UNIT_COLOR
+    if _UNIT_COLOR is None:
+        _UNIT_COLOR = batch_for_shader(shader, 'TRIS', {"pos": _UNIT_VERTS},
+                                       indices=_UNIT_INDICES)
+    return _UNIT_COLOR
+
+
+def _get_cel_names():
+    global _CEL_NAMES
+    if _CEL_NAMES is None:
+        _CEL_NAMES = frozenset(layer.datablock_name for layer in cel_store.LAYERS)
+    return _CEL_NAMES
+
+
 def _diag(msg: str) -> None:
     global _DIAG_DONE
     if _DIAG_DONE:
@@ -51,27 +93,6 @@ def _diag(msg: str) -> None:
             _DIAG_DONE = True
     except Exception:
         pass
-
-
-def _draw_quad(shader, kind, tex, verts, uvs, indices, rgba) -> None:
-    try:
-        batch = batch_for_shader(shader, 'TRIS',
-                                  {"pos": verts, "texCoord": uvs},
-                                  indices=indices)
-    except Exception as e:
-        _diag(f"batch_for_shader: {e}")
-        return
-    shader.bind()
-    try:
-        shader.uniform_sampler("image", tex)
-    except Exception as e:
-        _diag(f"uniform_sampler: {e}")
-    if kind == 'IMAGE_COLOR':
-        try:
-            shader.uniform_float("color", rgba)
-        except Exception as e:
-            _diag(f"uniform_float: {e}")
-    batch.draw(shader)
 
 
 def _draw_overlay() -> None:
@@ -113,10 +134,6 @@ def _draw_overlay() -> None:
         _diag("no shader available")
         return
 
-    verts   = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
-    uvs     = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
-    indices = [(0, 1, 2), (0, 2, 3)]
-
     g = gp()
 
     # In CEL_LAYERS mode (viewing a cel) cover the editor's native drawing of
@@ -127,35 +144,52 @@ def _draw_overlay() -> None:
         synch_mode = ctx.scene.domeanimatic.synch_mode
     except Exception:
         synch_mode = None
-    cel_names     = {layer.datablock_name for layer in cel_store.LAYERS}
-    draw_backdrop = (synch_mode == 'CEL_LAYERS' and shown_img.name in cel_names)
+    draw_backdrop = (synch_mode == 'CEL_LAYERS'
+                     and shown_img.name in _get_cel_names())
 
+    # All quads are the cached unit quad, placed by a model matrix — no
+    # per-redraw batch_for_shader / VBO rebuilds.
     try:
         gpu.state.scissor_set(sc_x, sc_y, sc_w, sc_h)
         gpu.state.scissor_test_set(True)
         gpu.state.blend_set('ALPHA')
 
-        if draw_backdrop:
-            bd_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-            bd_batch  = batch_for_shader(bd_shader, 'TRI_FAN', {"pos": verts})
-            bd_shader.bind()
-            bd_shader.uniform_float("color", (0.0, 0.0, 0.0, 1.0))
-            bd_batch.draw(bd_shader)
+        with gpu.matrix.push_pop():
+            gpu.matrix.translate((x0, y0))
+            gpu.matrix.scale((x1 - x0, y1 - y0))
 
-        for layer in cel_store.DRAW_ORDER:
-            slot_key = layer.slot_id.lower()
-            if not getattr(g, f"{slot_key}_visible", True):
-                continue
-            img = cel_store.get_cel_image(layer.slot_id)
-            if img is None:
-                continue
-            try:
-                tex = gpu.texture.from_image(img)
-            except Exception as e:
-                _diag(f"texture.from_image {layer.slot_id}: {e}")
-                continue
-            opacity = float(getattr(g, f"{slot_key}_opacity", 1.0))
-            _draw_quad(shader, kind, tex, verts, uvs, indices, (1.0, 1.0, 1.0, opacity))
+            if draw_backdrop:
+                bd_shader = _get_bd_shader()
+                bd_batch  = _get_unit_color_batch(bd_shader)
+                bd_shader.bind()
+                bd_shader.uniform_float("color", (0.0, 0.0, 0.0, 1.0))
+                bd_batch.draw(bd_shader)
+
+            batch = _get_unit_img_batch(shader)
+            for layer in cel_store.DRAW_ORDER:
+                slot_key = layer.slot_id.lower()
+                if not getattr(g, f"{slot_key}_visible", True):
+                    continue
+                img = cel_store.get_cel_image(layer.slot_id)
+                if img is None:
+                    continue
+                try:
+                    tex = gpu.texture.from_image(img)
+                except Exception as e:
+                    _diag(f"texture.from_image {layer.slot_id}: {e}")
+                    continue
+                opacity = float(getattr(g, f"{slot_key}_opacity", 1.0))
+                shader.bind()
+                try:
+                    shader.uniform_sampler("image", tex)
+                except Exception as e:
+                    _diag(f"uniform_sampler: {e}")
+                if kind == 'IMAGE_COLOR':
+                    try:
+                        shader.uniform_float("color", (1.0, 1.0, 1.0, opacity))
+                    except Exception as e:
+                        _diag(f"uniform_float: {e}")
+                batch.draw(shader)
 
     finally:
         gpu.state.blend_set('NONE')
@@ -204,6 +238,7 @@ def register() -> None:
 
 def unregister() -> None:
     global _DRAW_HANDLE, _SHADER, _SHADER_KIND, _DIAG_DONE
+    global _BD_SHADER, _UNIT_IMG, _UNIT_COLOR, _CEL_NAMES
     if _DRAW_HANDLE is not None:
         try:
             bpy.types.SpaceImageEditor.draw_handler_remove(_DRAW_HANDLE, 'WINDOW')
@@ -213,3 +248,7 @@ def unregister() -> None:
     _SHADER      = None
     _SHADER_KIND = None
     _DIAG_DONE   = False
+    _BD_SHADER   = None
+    _UNIT_IMG    = None
+    _UNIT_COLOR  = None
+    _CEL_NAMES   = None

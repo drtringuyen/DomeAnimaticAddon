@@ -90,16 +90,39 @@ def get_current_scene_frame_info(scene):
 
 def vse_get_strip_on_channel(scene, channel: int, frame: int,
                               include_muted: bool = False):
-    """IMAGE strip on exactly `channel` containing `frame`."""
+    """IMAGE strip on exactly `channel` containing `frame`.
+
+    Channel is tested first: it rejects ~95% of strips with one int compare,
+    skipping the remaining RNA attribute reads (the strip list also contains
+    hundreds of sound strips on other channels)."""
     seq = scene.sequence_editor
     if not seq:
         return None
     for s in seq.strips_all:
-        if (s.type == 'IMAGE' and s.channel == channel
+        if (s.channel == channel and s.type == 'IMAGE'
                 and (include_muted or not s.mute)
                 and s.frame_final_start <= frame < s.frame_final_end):
             return s
     return None
+
+
+def vse_get_strips_on_channels(scene, channels, frame: int,
+                               include_muted: bool = False) -> dict:
+    """One pass over strips_all → {channel: IMAGE strip or None}.
+
+    Equivalent to calling vse_get_strip_on_channel once per channel but ~N×
+    cheaper — the strip list is walked a single time. Use this in per-frame /
+    per-redraw code (sync handler, watchers, panel draw)."""
+    out = {ch: None for ch in channels}
+    seq = scene.sequence_editor
+    if not seq:
+        return out
+    for s in seq.strips_all:
+        if (s.channel in out and s.type == 'IMAGE'
+                and (include_muted or not s.mute)
+                and s.frame_final_start <= frame < s.frame_final_end):
+            out[s.channel] = s
+    return out
 
 
 def vse_get_channel_end_frame(scene, channel: int):

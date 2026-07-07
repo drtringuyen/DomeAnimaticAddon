@@ -4,10 +4,40 @@ ui.py — Painting Cel sub-panel (child of the main DomeAnimatic panel).
 
 import bpy
 import os
+import time
 
 from ... import cel_store, vse_helpers
 from ...global_scene_shared_props import gp, sp
 from . import image_io
+
+
+# ── Panel-draw caches ─────────────────────────────────────────────────────────
+# Panel draw runs on every UI redraw; these helpers hit the filesystem
+# (os.listdir / glob) and resolve thousands of strip-frame paths, which costs
+# 10-15 ms per redraw on a fast machine and much more on a slow disk. A short
+# TTL keeps the labels fresh enough while making redraws ~free.
+
+_UI_TTL   = 2.0
+_ui_cache = {"unused": (0.0, 0), "closest": {}}
+
+
+def _cached_unused_count() -> int:
+    now  = time.monotonic()
+    t, n = _ui_cache["unused"]
+    if now - t > _UI_TTL:
+        n = _count_unused_cel_files()
+        _ui_cache["unused"] = (now, n)
+    return n
+
+
+def _cached_closest_display(slot_id: str):
+    now    = time.monotonic()
+    t, val = _ui_cache["closest"].get(slot_id, (0.0, None))
+    if now - t > _UI_TTL:
+        path, _ = image_io.find_closest_cel_file(slot_id)
+        val = os.path.splitext(os.path.basename(path))[0] if path else None
+        _ui_cache["closest"][slot_id] = (now, val)
+    return val
 
 
 def _count_unused_cel_files() -> int:
@@ -19,11 +49,11 @@ def _count_unused_cel_files() -> int:
     if dome_scene and dome_scene.sequence_editor:
         for strip in dome_scene.sequence_editor.strips_all:
             if strip.type == 'IMAGE' and strip.channel in cel_store.CEL_CHANNELS:
-                for frame in range(int(strip.frame_final_start),
-                                   int(strip.frame_final_end)):
-                    p = vse_helpers.resolve_strip_image_path(strip, frame)
-                    if p:
-                        referenced.add(os.path.normpath(p))
+                # Resolve per element, not per frame — cel strips are
+                # single-image strips spanning many frames.
+                for el in strip.elements:
+                    p = bpy.path.abspath(os.path.join(strip.directory, el.filename))
+                    referenced.add(os.path.normpath(p))
     count = 0
     for fname in os.listdir(folder):
         if not fname.lower().endswith('.png'):
@@ -63,30 +93,23 @@ def draw_baked_row(layout, context) -> None:
     save_op.slot = 'CEL_Baked'
 
 
-def draw_row(layout, g, slot_id: str) -> None:
+def draw_row(layout, g, slot_id: str, has_strip: bool) -> None:
     """
-    One cel row.
+    One cel row. `has_strip` is computed once for all rows by the caller
+    (single strip-list pass — the panel redraws constantly).
     Layout: [👁] [label | filepath] [opacity] [Full] [Cut] [Clear] [Delete] [Save]
     """
     slot_key  = slot_id.lower()
     layer     = cel_store.BY_SLOT[slot_id]
-    channel   = layer.vse_channel
     is_active = g.active_cel == slot_id
     visible   = getattr(g, f"{slot_key}_visible", True)
 
-    dome_scene = bpy.data.scenes.get("Dome Animatic")
-    frame      = image_io.dome_frame()
-    # include_muted=True: cel strips are muted in BAKED mode for VSE rendering
-    # but we still need to detect them for UI state (has_strip, is_dirty).
-    has_strip  = (dome_scene is not None and
-                  vse_helpers.vse_get_strip_on_channel(dome_scene, channel, frame,
-                                                       include_muted=True) is not None)
-
     if has_strip:
         filepath = getattr(g, f"{slot_key}_filepath", "")
-        found_path, _ = image_io.find_closest_cel_file(slot_id)
-        display = (os.path.splitext(os.path.basename(filepath))[0] if filepath else
-                   (os.path.splitext(os.path.basename(found_path))[0] if found_path else "empty"))
+        if filepath:
+            display = os.path.splitext(os.path.basename(filepath))[0]
+        else:
+            display = _cached_closest_display(slot_id) or "empty"
     else:
         display = "empty"
 
@@ -184,9 +207,20 @@ def _draw_painting_cel(self, context):
                           text="Unbaked Cels", icon='RENDERLAYERS')
 
         if mode == 'CEL_LAYERS':
+            # One strip-list pass serves every row, the dirty summary and the
+            # duplicate buttons (include_muted=True: cel strips are muted in
+            # BAKED mode but still count for UI state).
+            dome_scene = bpy.data.scenes.get("Dome Animatic")
+            frame      = image_io.dome_frame()
+            strips_now = (vse_helpers.vse_get_strips_on_channels(
+                              dome_scene, cel_store.CEL_CHANNELS, frame,
+                              include_muted=True)
+                          if dome_scene is not None else {})
+
             col = cel_box.column(align=False)
             for slot_id in reversed([layer.slot_id for layer in cel_store.DRAW_ORDER]):
-                draw_row(col, g, slot_id)
+                has = strips_now.get(cel_store.BY_SLOT[slot_id].vse_channel) is not None
+                draw_row(col, g, slot_id, has)
                 col.separator(factor=0.2)
 
             # Lasso transform — only enabled in an Image Editor (operator poll)
@@ -197,13 +231,9 @@ def _draw_painting_cel(self, context):
 
             # Toon Boom-style drawing duplication: always saves a NEW png so
             # the copy never shares pixels with the original strip.
-            dup_scene     = bpy.data.scenes.get("Dome Animatic")
-            dup_frame     = image_io.dome_frame()
-            active_layer  = cel_store.BY_SLOT.get(g.active_cel)
-            active_strip  = (dup_scene is not None and active_layer is not None and
-                             vse_helpers.vse_get_strip_on_channel(
-                                 dup_scene, active_layer.vse_channel, dup_frame,
-                                 include_muted=True) is not None)
+            active_layer = cel_store.BY_SLOT.get(g.active_cel)
+            active_strip = (active_layer is not None and
+                            strips_now.get(active_layer.vse_channel) is not None)
             dup_row = cel_box.row(align=True)
             dup_row.scale_y = 1.2
             up_sub = dup_row.row(align=True)
@@ -224,18 +254,12 @@ def _draw_painting_cel(self, context):
 
         # Dirty-slots summary: shows which cels have unsaved changes
         if mode == 'CEL_LAYERS':
-            dome_scene = bpy.data.scenes.get("Dome Animatic")
-            frame      = image_io.dome_frame()
             dirty_slots = []
             for layer in cel_store.LAYERS:
                 img = bpy.data.images.get(layer.datablock_name)
-                if img and img.is_dirty:
-                    has = (dome_scene is not None and
-                           vse_helpers.vse_get_strip_on_channel(
-                               dome_scene, layer.vse_channel, frame,
-                               include_muted=True) is not None)
-                    if has:
-                        dirty_slots.append(layer.filename_label)
+                if (img and img.is_dirty
+                        and strips_now.get(layer.vse_channel) is not None):
+                    dirty_slots.append(layer.filename_label)
             if dirty_slots:
                 warn_row = cel_box.row()
                 warn_row.alert = True
@@ -245,7 +269,7 @@ def _draw_painting_cel(self, context):
                 )
 
         if mode == 'CEL_LAYERS':
-            unused_count = _count_unused_cel_files()
+            unused_count = _cached_unused_count()
             purge_row    = layout.row()
             purge_row.enabled = unused_count > 0
             purge_row.operator(

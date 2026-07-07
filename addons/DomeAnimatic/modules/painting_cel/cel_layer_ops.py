@@ -722,11 +722,12 @@ class DOMEANIMATIC_OT_cel_purge_unused(bpy.types.Operator):
         if dome_scene and dome_scene.sequence_editor:
             for strip in dome_scene.sequence_editor.strips_all:
                 if strip.type == 'IMAGE' and strip.channel in cel_store.CEL_CHANNELS:
-                    for frame in range(int(strip.frame_final_start),
-                                       int(strip.frame_final_end)):
-                        p = vse_helpers.resolve_strip_image_path(strip, frame)
-                        if p:
-                            referenced.add(os.path.normpath(p))
+                    # Per element, not per frame — cel strips are single-image
+                    # strips spanning many frames.
+                    for el in strip.elements:
+                        p = bpy.path.abspath(os.path.join(strip.directory,
+                                                          el.filename))
+                        referenced.add(os.path.normpath(p))
 
         unused = []
         for fname in os.listdir(folder):
